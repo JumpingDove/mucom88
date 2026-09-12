@@ -9,6 +9,7 @@
 
 #include <stdio.h>
 #include <stdio.h>
+#include <climits>
 #include "mucomvm.h"
 
 #include "adpcm.h"
@@ -265,7 +266,7 @@ void mucomvm::ResetFM(void)
 	}
 }
 
-void mucomvm::InitSoundSystem(int rate)
+bool mucomvm::InitSoundSystem(int rate)
 {
 	// レート設定
 	Rate = rate;
@@ -277,7 +278,8 @@ void mucomvm::InitSoundSystem(int rate)
 
 	// OS依存部分
 	osd = new OSDEP_CLASS();
-	if (osd == NULL) return;
+	if (osd == NULL) return false;
+	bool initialized = true;
 
 	//		COM初期化
 	//
@@ -293,7 +295,7 @@ void mucomvm::InitSoundSystem(int rate)
 	if (!(m_option & VM_OPTION_STEP)) {
 		osd->UserAudioCallback->Set(this, &RunAudioCallback);
 		osd->UserTimerCallback->Set(this, &RunTimerCallback);
-		osd->InitAudio(master_window, rate, BUFSIZE);
+		if (!osd->InitAudio(master_window, rate, BUFSIZE)) initialized = false;
 	}
 
 	//		タイマー初期化
@@ -301,7 +303,7 @@ void mucomvm::InitSoundSystem(int rate)
 	ResetTimer();
 
 	if (!(m_option & VM_OPTION_STEP)) {
-		osd->InitTimer();
+		if (!osd->InitTimer()) initialized = false;
 		osd->ResetTime();
 	}
 
@@ -320,6 +322,7 @@ void mucomvm::InitSoundSystem(int rate)
 
 	playflag = true;
 	//printf("#Stream update %dms.\n", time_stream);
+	return initialized;
 }
 
 void mucomvm::Reset(void)
@@ -655,8 +658,9 @@ int mucomvm::ExecUntilHalt(int times)
 	bool adrmap[0x10000];
 	memset(adrmap, 0, 0x10000);
 
-	int last_pc = 0x0;
+#ifdef DEBUGZ80_TRACE
 	int cnt=0;
+#endif
 	int id = 0;
 	msgid = 0;
 	while (1) {
@@ -715,10 +719,11 @@ int mucomvm::ExecUntilHalt(int times)
 			if (verbose) printf("run:pc:%04x\n", pc);
 		}
 
-		last_pc = pc;
 		Execute(times);
 		if (m_flag == VMFLAG_HALT) break;
+#ifdef DEBUGZ80_TRACE
 		cnt++;
+#endif
 	}
 #ifdef DEBUGZ80_TRACE
 	membuf->SaveFile("trace.txt");
@@ -832,7 +837,7 @@ void mucomvm::Msgf(const char *format, ...)
 	char outbuf[4096];
 	va_list args;
 	va_start(args, format);
-	vsprintf(textbf, format, args);
+	vsnprintf(textbf, sizeof(textbf), format, args);
 	va_end(args);
 
 	Conv->FromSjis(textbf, outbuf, 4096);
@@ -845,7 +850,7 @@ void mucomvm::MsgfNoConvert(const char *format, ...)
 	char textbf[4096];
 	va_list args;
 	va_start(args, format);
-	vsprintf(textbf, format, args);
+	vsnprintf(textbf, sizeof(textbf), format, args);
 	va_end(args);
 	membuf->PutStr(textbf);
 }
@@ -954,12 +959,19 @@ char *mucomvm::LoadAlloc(const char *fname, int *sizeout)
 	fp = fopen(fname, "rb");
 	if (fp == NULL) return NULL;
 	fseek(fp, 0, SEEK_END);
-	sz = (int)ftell(fp);			// normal file size
-	if (sz <= 0) return NULL;
+	const long fileSize = ftell(fp);
+	if (fileSize <= 0 || fileSize > INT_MAX || fseek(fp, 0, SEEK_SET) != 0) {
+		fclose(fp);
+		return NULL;
+	}
+	sz = static_cast<int>(fileSize);
 	buf = (char *)malloc(sz+16);
 	if (buf) {
-		fseek(fp, 0, SEEK_SET);
-		fread(buf, 1, sz, fp);
+		if (fread(buf, 1, sz, fp) != static_cast<size_t>(sz)) {
+			free(buf);
+			fclose(fp);
+			return NULL;
+		}
 		fclose(fp);
 		buf[sz] = 0;
 		Msgf("#load:%s (%d)\r\n", fname, sz);
@@ -988,14 +1000,16 @@ int mucomvm::LoadPcmFromMem(const char *buf, int sz, int maxpcm)
 	int infosize;
 	int i;
 	int pcmtable;
-	int inftable;
 	int adr, whl, eadr;
 	char pcmname[17];
 	const unsigned char *table = (const unsigned char*)buf;
 
 
 	infosize = 0x400;
-	inftable = 0xd000;
+	if (buf == NULL || sz < infosize || sz - infosize > 0x40000 ||
+		maxpcm < 0 || maxpcm > 32) {
+		return -1;
+	}
 	//SendMem((const unsigned char *)buf, inftable, infosize);
 	pcmtable = 0xe300;
 	for (i = 0; i < maxpcm; i++) {
@@ -1015,7 +1029,6 @@ int mucomvm::LoadPcmFromMem(const char *buf, int sz, int maxpcm)
 			Msgf("#PCM%d $%04x $%04x %s\r\n", i + 1, adr, eadr, pcmname);
 		}
 		pcmtable += 8;
-		inftable += 32;
 		table += 32;
 	}
 	pcmdat = (char *)buf + infosize;
@@ -1046,10 +1059,11 @@ int mucomvm::LoadPcm(const char *fname,int maxpcm)
 	char *buf;
 	buf = LoadAlloc( fname, &sz );
 	if (buf) {
-		LoadPcmFromMem( buf,sz,maxpcm );
+		const int result = LoadPcmFromMem( buf,sz,maxpcm );
 		LoadAllocFree(buf);
+		return result;
 	}
-	return 0;
+	return -1;
 }
 
 
@@ -1092,12 +1106,11 @@ int mucomvm::SaveToFile(const char *fname, const unsigned char *src, int size)
 	//	バイナリファイルを保存
 	//
 	FILE *fp;
-	int flen;
 	fp = fopen(fname, "wb");
 	if (fp == NULL) return -1;
-	flen = (int)fwrite(src, 1, size, fp);
-	fclose(fp);
-	return 0;
+	const size_t written = fwrite(src, 1, size, fp);
+	const int closeResult = fclose(fp);
+	return written == static_cast<size_t>(size) && closeResult == 0 ? 0 : -1;
 }
 
 void mucomvm::CopyMemToVm(const uint8_t * src, int address, int length) 
@@ -1540,8 +1553,8 @@ ADPCM
 int mucomvm::ConvertWAVtoADPCMFile(const char *fname, const char *sname)
 {
 	Adpcm adpcm;
-	DWORD dAdpcmSize;
-	BYTE *dstbuffer;
+	std::uint32_t dAdpcmSize;
+	std::uint8_t *dstbuffer;
 	int sz, res;
 
 	char *buf;

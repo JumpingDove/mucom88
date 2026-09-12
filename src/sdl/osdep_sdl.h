@@ -1,75 +1,72 @@
-// OsDependent SDL
-// BouKiCHi 2019
+// SDL2 implementation of the operating-system abstraction.
 
 #ifndef _OS_DEP_SDL_H_
 #define _OS_DEP_SDL_H_
 
 #include <SDL.h>
-#include <stdint.h>
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+
 #include "../osdep.h"
-#include "audiotime.h"
 #include "audiobuffer.h"
+#include "audiotime.h"
 
 class OsDependentSdl : public OsDependent {
 public:
-	OsDependentSdl();
-	~OsDependentSdl();
+    OsDependentSdl();
+    ~OsDependentSdl();
 
-	// COMの初期化(最初の１回のみ)
-	bool CoInitialize();
+    bool CoInitialize();
 
-	// サウンド
-	bool InitAudio(void *hwnd, int Rate, int BufferSize);
-	void FreeAudio();
-	bool SendAudio(int ms);
-	void WaitSendingAudio();
-	void AudioMain(short *buffer, int size);
+    bool InitAudio(void *hwnd, int rate, int bufferSize);
+    void FreeAudio();
+    bool SendAudio(int ms);
+    void WaitSendingAudio();
+    void AudioMain(short *buffer, int frames);
 
+    bool InitRealChip();
+    void FreeRealChip();
+    void ResetRealChip();
+    int CheckRealChip();
+    int CheckRealChipSB2();
+    void OutputRealChip(unsigned int reg, unsigned int data);
+    void OutputRealChipAdpcm(void *data, int size);
 
-	// 実チップ
-	bool InitRealChip();
-	void FreeRealChip();
-	void ResetRealChip();
-	int CheckRealChip();
-	int CheckRealChipSB2();
-	void OutputRealChip(unsigned int Register, unsigned int Data);
-	void OutputRealChipAdpcm(void *pData, int size);
+    bool InitTimer();
+    void FreeTimer();
+    void UpdateTimer();
+    void ResetTime();
+    int GetElapsedTime();
+    int GetStatus(int option);
 
-	// タイマー
-	bool InitTimer();
-	void FreeTimer();
-	void UpdateTimer();
-	void ResetTime();
-	int GetElapsedTime();
-	int GetStatus(int option);
+    int GetMilliseconds();
+    void Delay(int ms);
 
-	// 時間
-	int GetMilliseconds();
-	void Delay(int ms);
+    int InitPlugin(Mucom88Plugin *plugin, const char *filename, int bootopt);
+    void FreePlugin(Mucom88Plugin *plugin);
+    int ExecPluginVMCommand(Mucom88Plugin *plugin, int, int, int, void *, void *);
+    int ExecPluginEditorCommand(Mucom88Plugin *plugin, int, int, int, void *, void *);
 
-	// プラグイン拡張
-	int InitPlugin(Mucom88Plugin *plg, const char *filename, int bootopt);
-	void FreePlugin(Mucom88Plugin *plg);
-	int ExecPluginVMCommand(Mucom88Plugin *plg, int, int, int, void *, void *);
-	int ExecPluginEditorCommand(Mucom88Plugin *plg, int, int, int, void *, void *);
+    int GetDirectory(char *buffer, int size);
+    int ChangeDirectory(const char *directory);
+    int KillFile(const char *filename);
 
-	// ファイル操作関連
-	int GetDirectory(char *buf, int size);
-	int ChangeDirectory(const char *dir);
-	int KillFile(const char *filename);
+    bool SetBreakHook();
+    bool GetBreakStatus();
 
-	// その他
-	bool SetBreakHook();
-	bool GetBreakStatus();
+private:
+    bool InitSubsystem(Uint32 flags);
+    void QuitSubsystem(Uint32 flags);
 
     AudioBuffer *Buffer;
     AudioTimeInfo *Time;
-    AudioTimeInfo *TimeRender;
-
     bool AudioOpenFlag;
-
-private:
-	SDL_TimerID TimerId;
+    SDL_AudioDeviceID AudioDevice;
+    SDL_TimerID TimerId;
+    Uint32 InitializedSubsystems;
+    std::atomic<bool> ShuttingDown;
+    std::chrono::steady_clock::time_point StartTime;
 };
 
 #endif

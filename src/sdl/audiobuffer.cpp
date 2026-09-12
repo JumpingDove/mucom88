@@ -1,82 +1,123 @@
-// audiobuffer.cpp 
-// BouKiCHi 2019
+// Audio ring buffer shared by the SDL timer producer and audio callback consumer.
 
-#include <string.h>
+#include <algorithm>
+#include <cstring>
+
 #include "audiobuffer.h"
 
-AudioBuffer::AudioBuffer(int channels, int bufferSize, int blockSize) {
-    SendBuffer = false;
+AudioBuffer::AudioBuffer(int channels, int bufferSize, int blockSize)
+    : SendBuffer(false),
+      UnderCount(0),
+      WritePosition(0),
+      WriteCount(0),
+      ReadPosition(0),
+      SamplePerTick(0),
+      UpdateSamples(0),
+      Channels(channels),
+      BufferSize(bufferSize),
+      BlockSize(blockSize),
+      AudioData(new short[bufferSize])
+{
+    std::memset(AudioData, 0, sizeof(short) * BufferSize);
+}
 
+AudioBuffer::~AudioBuffer()
+{
+    delete[] AudioData;
+}
+
+void AudioBuffer::Reset()
+{
+    std::lock_guard<std::mutex> lock(Mutex);
+    SendBuffer = false;
     UnderCount = 0;
     WritePosition = 0;
     WriteCount = 0;
     ReadPosition = 0;
-
-    SamplePerTick = 0;
     UpdateSamples = 0;
-
-    Channels = channels;
-    BufferSize = bufferSize;
-    BlockSize = blockSize;
-
-    AudioData = new short[BufferSize];
-    memset(AudioData, 0, sizeof(short) * BufferSize);
+    std::memset(AudioData, 0, sizeof(short) * BufferSize);
 }
 
-AudioBuffer::~AudioBuffer() {
-    delete[] AudioData;
+int AudioBuffer::GetLeft()
+{
+    std::lock_guard<std::mutex> lock(Mutex);
+    return std::max(0, (BufferSize - BlockSize) - WriteCount);
 }
 
-// リセット
-void AudioBuffer::Reset() {
-    WritePosition = 0;
-    WriteCount = 0;
-    ReadPosition = 0;
+int AudioBuffer::TickToSamples(int ms)
+{
+    std::lock_guard<std::mutex> lock(Mutex);
+    UpdateSamples += ms * SamplePerTick * Channels;
+    return static_cast<int>(UpdateSamples);
 }
 
-// バッファサイズ - 再生領域
-int AudioBuffer::GetLeft() {
-    return (BufferSize - BlockSize) - WriteCount;
+void AudioBuffer::ClearTick()
+{
+    std::lock_guard<std::mutex> lock(Mutex);
+    UpdateSamples -= static_cast<int>(UpdateSamples);
 }
 
-// ミリ秒からサンプル数を作成する
-int AudioBuffer::TickToSamples(int ms) {
-    UpdateSamples += (ms * SamplePerTick * Channels);
-    int s = (int)UpdateSamples;
-    return s;
+void AudioBuffer::SetRate(int rate)
+{
+    std::lock_guard<std::mutex> lock(Mutex);
+    SamplePerTick = static_cast<double>(rate) / 1000;
 }
 
-void AudioBuffer::ClearTick() {
-    UpdateSamples -= (int)UpdateSamples;
+void AudioBuffer::StartSending()
+{
+    std::lock_guard<std::mutex> lock(Mutex);
+    SendBuffer = true;
 }
 
-
-// 1msあたりのサンプル数を計算する
-void AudioBuffer::SetRate(int rate) {
-    SamplePerTick = ((double)rate/1000);
+bool AudioBuffer::IsSending()
+{
+    std::lock_guard<std::mutex> lock(Mutex);
+    return SendBuffer;
 }
 
-// 事前に宣言しないと生成されません…。
-template void AudioBuffer::Write<int*>(int *input,int frames);
-template void AudioBuffer::Write<short*>(short *input,int frames);
+int AudioBuffer::GetUnderCount()
+{
+    std::lock_guard<std::mutex> lock(Mutex);
+    return UnderCount;
+}
 
-// サンプルをバッファを書き込み
-template <typename T> void AudioBuffer::Write(T input,int frames) {
-    short *output = AudioData;
-
-    int count = WriteCount;
-    int pos = WritePosition;
-
-    // int -> short
-    for(int i=0; i < frames*2; i++) {
-        int v=input[i];
-
-        output[pos] = v > 32767 ? 32767 : (v < -32768 ? -32768 : v);
-        pos++;
-        count++;
-        if (pos >= BufferSize) pos = 0;
+void AudioBuffer::Read(short *output, int frames)
+{
+    std::lock_guard<std::mutex> lock(Mutex);
+    const int samples = frames * Channels;
+    if (!SendBuffer) {
+        std::memset(output, 0, samples * sizeof(short));
+        return;
     }
 
-    WriteCount = count;
-    WritePosition = pos;
+    bool underflow = false;
+    for (int index = 0; index < samples; ++index) {
+        if (WriteCount <= 0) {
+            output[index] = 0;
+            underflow = true;
+            continue;
+        }
+        output[index] = AudioData[ReadPosition++];
+        --WriteCount;
+        if (ReadPosition >= BufferSize) ReadPosition = 0;
+    }
+    if (underflow) ++UnderCount;
+}
+
+template void AudioBuffer::Write<int *>(int *input, int frames);
+template void AudioBuffer::Write<short *>(short *input, int frames);
+
+template <typename T>
+void AudioBuffer::Write(T input, int frames)
+{
+    std::lock_guard<std::mutex> lock(Mutex);
+    const int requested = frames * Channels;
+    const int samples = std::min(requested, BufferSize - WriteCount);
+    for (int index = 0; index < samples; ++index) {
+        const int value = input[index];
+        AudioData[WritePosition++] =
+            static_cast<short>(std::max(-32768, std::min(32767, value)));
+        ++WriteCount;
+        if (WritePosition >= BufferSize) WritePosition = 0;
+    }
 }

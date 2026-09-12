@@ -706,3 +706,50 @@ baselineは次の通りである。これは正式goldenではなく、修正後
 
 推奨defaultは「macOS 11.0、Universal release、開発時Homebrew・配布時SDL2同梱、初期はCtrl-C停止、
 `mucompcm.bin`と`voice.dat`をlicense/attribution付きでdata directoryへ配置」である。
+
+## 12. 初期CLI移植の実装結果
+
+2026-09-12に、11章の具体案に基づく初期CLI移植を実装した。今回の範囲はCLI、SDL2 backend、
+入力安全性、文字コード、build定義および利用手順であり、Windows GUI、HSP plugin、FM Tone Editor、
+SCCI実chip、旧Xcode projectの再生は対象外である。
+
+### 実装済み
+
+- CMakeを3.20/C++17へ更新し、SDL2 config packageまたはpkg-config、macOS iconvをtarget単位でlink
+- Makefileを`sdl2-config`へ移行し、Darwinの暗黙static linkと`-DDUSE_ICONV` typoを修正
+- WAV/ADPCM parserを固定幅型と明示的little-endian readerへ変更し、chunk境界とpadを検証
+- CLI optionの値不足、競合、複数入力、非対応plugin/SCCIを検査し、usage errorをexit 2へ統一
+- compile-only、情報表示、offline renderingではSDL audio deviceを開かないlazy初期化を実装
+- SDL2 device IDとobtained formatを管理し、timer/device/subsystemを所有順の逆順で解放
+- Ctrl-C/SIGTERMをflag経由で処理し、通常のdestructor経路でrealtime再生を終了
+- audio ring bufferをmutexで同期し、callbackのunderflowとframe境界を修正
+- CP932からUTF-8へのiconv変換、変換不能byte、buffer不足、descriptor失敗を処理
+- PCM、FM voice、MUB header/offset/size、file read/writeの検証とerror伝播を追加
+- WAVのRIFF sizeと録音末尾blockを修正し、指定秒数ちょうどのsample数を出力
+- 入出力pathを`std::filesystem`で解決し、入力file directoryをtag内相対resourceの基準に設定
+
+### 実機確認結果
+
+Apple Silicon/macOS 26.6.2、Apple clang 21、Homebrew SDL2/iconvの環境で、Makefileによるarm64
+clean buildがwarningなしで成功した。CMake executableは調査環境に未導入のため、CMake configureは
+未実行である。
+
+| case | 結果 |
+|---|---|
+| `-h` / 引数なし / option値不足 / `-s` | exit 0 / 2 / 2 / 2 |
+| `package/sampl1.muc` compile | 65,647 byte、移植前baselineとMD5一致 |
+| sample 1～3 compile | 全て成功（65,647 / 3,886 / 1,309 byte） |
+| 1秒WAV | 176,444 byte、44.1 kHz、16 bit、stereo、RIFF/data size正常 |
+| 1秒VGM | 2,396 byte |
+| legacy日本語PCM名 | `ｺｰﾗｽ`をUTF-8 terminalへ正常表示 |
+| realtime再生 | SDL dummy deviceで開始し、Ctrl-C後exit 0、hangなし |
+
+### 残課題
+
+- CMake configure/build、x86_64およびUniversal Binary、最低対応macOSでの検証
+- ASan/UBSanおよびTSanを含む自動test/CTestと、不正MUB/WAV/PCM fixtureの常設
+- process-global `chdir`の完全排除。現実装はtag相対path互換のため処理全体を入力directoryで実行し、
+  rhythm directoryへの変更だけを初期化中に限定して必ず復元する
+- install後のdefault data directory、SDL2同梱、`@rpath`、codesign、notarization
+- 曲の自然終了検出。初期仕様は従来通りCtrl-C停止
+- `pcmtool`のpath/name境界修正と独立target化

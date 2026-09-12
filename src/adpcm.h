@@ -1,60 +1,23 @@
 #pragma once
 
-#ifdef _WIN32
-#include	<windows.h>
-#else
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
-#include <stdarg.h>
-#define BOOL int
-#define TRUE 1
-#define FALSE 0
-typedef unsigned char BYTE;
-typedef unsigned long DWORD;
-typedef unsigned short WORD;
-#endif
+#include <cstdint>
 
-typedef struct {
-	BYTE	bID[4];		// ヘッダ
-	DWORD	dSize;		// サイズ
-} RIFF_HED;
-
-typedef struct {
-	BYTE	bID[4];
-	DWORD	dChunkSize;
-} CHUNK_HED;
-
-typedef struct {
-	BYTE	bFMT[4];
-	DWORD	dChunkSize;
-	WORD	wFmt;
-	WORD	wChannels;
-	DWORD	dRate;
-	DWORD	dDataRate;
-	WORD	wBlockSize;
-	WORD	wSample;
-} WAVE_CHUNK;
-
-typedef struct {
-	BYTE	bID[4];
-	DWORD	dSize;
-	BYTE	bData[1];
-} DATA_CHUNK;
-
-class	Adpcm{
+class Adpcm {
 private:
-	RIFF_HED	*m_pRiffHed;
-	WAVE_CHUNK	*m_pWaveChunk;
-	DATA_CHUNK	*m_pDataChunk;
+    const std::uint8_t *pcmData;
+    std::uint32_t pcmDataSize;
+    std::uint16_t channels;
+    std::uint32_t sampleRate;
+    std::uint16_t bitsPerSample;
 
-	static short step_size[49];
-	static int step_adj[16];
 public:
-	Adpcm();
-	~Adpcm();
-	BYTE* waveToAdpcm(void *pData,DWORD dSize,DWORD &dAdpcmSize,DWORD dRate,DWORD dPadSize = 32);
-	short* resampling(DWORD &dSize,DWORD dRate,DWORD dPadSize);
-	int encode(short *pSrc,unsigned char *pDis,DWORD iSampleSize);
+    Adpcm();
+    ~Adpcm();
 
+    std::uint8_t *waveToAdpcm(const void *data, std::uint32_t dataSize,
+        std::uint32_t &adpcmSize, std::uint32_t rate, std::uint32_t padSize = 32);
+    std::int16_t *resampling(std::uint32_t &sampleCount, std::uint32_t rate,
+        std::uint32_t padSize);
+    int encode(const std::int16_t *source, std::uint8_t *destination,
+        std::uint32_t sampleCount);
 };

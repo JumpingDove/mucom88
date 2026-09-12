@@ -54,7 +54,7 @@ void WavWriter::WriteHeader()
   long PcmByteSize = TotalSamples * Channels * Bytes;
 
   memcpy(hdr, "RIFF", 4);
-  WriteDword(hdr + 4, PcmByteSize + 44);
+  WriteDword(hdr + 4, PcmByteSize + 36);
   memcpy(hdr + 8, "WAVEfmt ", 8);
   WriteDword(hdr + 16, 16);                           // chunk length
   WriteWord(hdr + 20, 1);                             // pcm id

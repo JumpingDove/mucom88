@@ -56,7 +56,7 @@ public:
 	void ResetMessageBuffer(void);
 
 	//		Z80コントロール
-	void InitSoundSystem(int Rate);
+	bool InitSoundSystem(int Rate);
 	void SetOption(int option);
 	int GetOption(void) { return m_option; }
 	void SetPC(uint16_t adr);

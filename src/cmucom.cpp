@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <cstdint>
 
 #include "utils/s98write.h"
 #include "utils/vgmwrite.h"
@@ -167,8 +168,10 @@ CMucom::~CMucom( void )
 
 }
 
-void CMucom::SetLogFilename(const char *filename) {
+bool CMucom::SetLogFilename(const char *filename) {
+	if (vm != NULL) vm->SetLogWriter(NULL);
 	if (p_log != NULL) delete p_log;
+	p_log = NULL;
 	const char *p = strrchr(filename, '.');
 
 	bool use_vgm = false;
@@ -181,11 +184,17 @@ void CMucom::SetLogFilename(const char *filename) {
 		p_log = new S98Write();
 	}
 
-	p_log->Open(filename);
+	if (!p_log->Open(filename)) {
+		delete p_log;
+		p_log = NULL;
+		return false;
+	}
+	if (vm != NULL) vm->SetLogWriter(p_log);
+	return true;
 }
 
 
-void CMucom::Init(void *window, int option, int rate)
+bool CMucom::Init(void *window, int option, int rate)
 {
 	//		MUCOM88の初期化(初回だけ呼び出してください)
 	//		window : 0   = ウインドウハンドル(HWND)
@@ -205,7 +214,7 @@ void CMucom::Init(void *window, int option, int rate)
 		vm->SetWindow(window);
 	}
 	vm->SetOption(option);
-	vm->InitSoundSystem(AudioCurrentRate);
+	const bool soundInitialized = vm->InitSoundSystem(AudioCurrentRate);
 	MusicBufferInit();
 	vm->SetMucomInstance(this);			// Mucomのインスタンスを通知する(プラグイン用)
 
@@ -217,6 +226,7 @@ void CMucom::Init(void *window, int option, int rate)
 	//		エディタが保持する情報のリセット
 	EditorReset();
 	InitFMVoice();
+	return soundInitialized;
 }
 
 
@@ -447,6 +457,7 @@ int CMucom::Play(int num, bool start)
 	if (buf == NULL) return -1;
 
 	hedmusic = (MUBHED *)buf->GetBuffer();
+	if (!MUBValidate(hedmusic, buf->GetSize())) return -2;
 	mubver = MUBGetHeaderVersion(hedmusic);
 	if (mubver < 0) return -2;
 
@@ -465,7 +476,9 @@ int CMucom::Play(int num, bool start)
 		if (skippcm==0) {
 			//	埋め込みPCMを読み込む
 			pcmdata = MUBGetPCMData(hedmusic, pcmsize);
-			vm->LoadPcmFromMem(pcmdata, pcmsize);
+			if (pcmdata == NULL || vm->LoadPcmFromMem(pcmdata, pcmsize) != 0) {
+				return -4;
+			}
 		}
 	}
 
@@ -622,24 +635,35 @@ void CMucom::PlayLoop() {
 }
 
 // AudioCurrentRateの設定が必要
-void CMucom::SetWavFilename(const char *fname) {
+bool CMucom::SetWavFilename(const char *fname) {
+	if (vm != NULL) vm->SetWavWriter(NULL);
 	if (p_wav != NULL) delete p_wav;
+	p_wav = NULL;
 
 	p_wav = new WavWriter();
 	p_wav->SetFormat(AudioCurrentRate, 16, 2);
-	if (!p_wav->Open(fname)) return;
+	if (!p_wav->Open(fname)) {
+		delete p_wav;
+		p_wav = NULL;
+		return false;
+	}
+	if (vm != NULL) vm->SetWavWriter(p_wav);
+	return true;
 }
 
 
 void CMucom::Record(int seconds) {
 	int buf[512];
 
-	int TotalSamples = 0;
+	std::int64_t TotalSamples = 0;
 
 	SetVMOption(VM_OPTION_STEP, 1);		// オプションを設定
 
-	while (TotalSamples < AudioCurrentRate * seconds) {
-		int samples = 16;
+	const std::int64_t targetSamples =
+		static_cast<std::int64_t>(AudioCurrentRate) * seconds;
+	while (TotalSamples < targetSamples) {
+		int samples = static_cast<int>(targetSamples - TotalSamples);
+		if (samples > 16) samples = 16;
 		RenderAudio(buf, samples);
 		TotalSamples += samples;
 	}
@@ -686,6 +710,10 @@ int CMucom::LoadTagFromMusic(int num)
 	}
 
 	hed = (MUBHED *)buf->GetBuffer();
+	if (!MUBValidate(hed, buf->GetSize())) {
+		infobuf->Put((int)0);
+		return -1;
+	}
 	ver = MUBGetHeaderVersion(hed);
 	if (ver < 0) {
 		infobuf->Put((int)0);
@@ -758,6 +786,7 @@ int CMucom::LoadPCM(const char * fname)
 	//
 	if (strcmp(pcmfilename,fname)==0) return 0;			// 既に読み込んでいる場合はスキップ
 	strncpy(pcmfilename, fname, MUCOM_FILE_MAXSTR-1);
+	pcmfilename[MUCOM_FILE_MAXSTR-1] = 0;
 	if (vm->LoadPcm(fname) == 0) return 0;
 	PRINTF("#PCM file not found [%s].\r\n", fname);
 	return -1;
@@ -777,6 +806,11 @@ int CMucom::LoadMusic(const char * fname, int num)
 		PRINTF("#MUSIC file not found [%s].\r\n", fname);
 		delete buf;
 		return -1;
+	}
+	if (!MUBValidate((MUBHED *)buf->GetBuffer(), buf->GetSize())) {
+		PRINTF("#Invalid MUB file [%s].\r\n", fname);
+		delete buf;
+		return -2;
 	}
 
 	if (musbuf[num] != NULL) {
@@ -966,6 +1000,11 @@ int CMucom::LoadFMVoice(const char *fname, bool sw)
 	voicedata_org = vm->LoadAlloc(voicefilename.c_str(), &voicesize);
 	if (voicedata_org == NULL) {
 		PRINTF("#Voice file not found [%s].\r\n", fname);
+		return -1;
+	}
+	if (voicesize < MUCOM_FMVOICE_SIZE) {
+		PRINTF("#Voice file is too short [%s] (%d bytes).\r\n", fname, voicesize);
+		vm->LoadAllocFree(voicedata_org);
 		return -1;
 	}
 	fmvoice_original = (MUCOM88_VOICEFORMAT *)voicedata_org;
@@ -2160,6 +2199,38 @@ int CMucom::MUBGetHeaderVersion(MUBHED *hed)
 	return -1;
 }
 
+bool CMucom::MUBValidate(MUBHED *hed, int totalSize)
+{
+	if (hed == NULL || totalSize < 32) return false;
+	const int version = MUBGetHeaderVersion(hed);
+	if (version < 0) return false;
+	if (version == MUCOM_HEADER_VERSION2 &&
+		totalSize < static_cast<int>(sizeof(MUBHED))) {
+		return false;
+	}
+
+	auto validRange = [totalSize](int offset, int size, bool optional) {
+		if (optional && offset == 0) return size == 0;
+		if (offset < 0 || size < 0) return false;
+		const std::int64_t end =
+			static_cast<std::int64_t>(offset) + static_cast<std::int64_t>(size);
+		return offset <= totalSize && end <= totalSize;
+	};
+
+	if (hed->datasize == 0 || !validRange(hed->dataoffset, hed->datasize, false)) {
+		return false;
+	}
+	if (!validRange(hed->tagdata, hed->tagsize, true)) return false;
+	if (!validRange(hed->pcmdata, hed->pcmsize, true)) return false;
+	const char *bytes = reinterpret_cast<const char *>(hed);
+	if (hed->tagdata != 0 &&
+		(hed->tagsize == 0 || bytes[hed->tagdata + hed->tagsize - 1] != 0)) {
+		return false;
+	}
+	if (hed->pcmdata != 0 && hed->pcmsize < 0x400) return false;
+	return true;
+}
+
 
 char *CMucom::MUBGetData(MUBHED *hed, int &size)
 {
@@ -2216,7 +2287,8 @@ void CMucom::GetMD5(char *res, char *buffer, int size)
 	md5_finish(&state, digest);
 
 	for (di = 0; di < 16; ++di) {
-		sprintf(hex_output + di * 2, "%02x", digest[di]);
+		snprintf(hex_output + di * 2, sizeof(hex_output) - di * 2,
+			"%02x", digest[di]);
 	}
 	strcpy(res, hex_output);
 }
@@ -2422,4 +2494,3 @@ int MUCOM88IF_EDITOR_COMMAND(void *ifptr, int cmd, int prm1, int prm2, void *prm
 	}
 	return -1;
 }
-

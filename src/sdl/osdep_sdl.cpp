@@ -1,277 +1,284 @@
-// OsDependent SDL
-// BouKiCHi 2019
+// SDL2 implementation of the operating-system abstraction.
 
-#include <SDL.h>
-#include <stdio.h>
 #include "osdep_sdl.h"
+
+#include <algorithm>
+#include <csignal>
+#include <cstdio>
+#include <cstring>
+#include <unistd.h>
 
 #define AUDIO_BUFFER_BLOCK 2048
 #define AUDIO_BUFFER_SIZE (AUDIO_BUFFER_BLOCK * 8)
 #define AUDIO_CHANNELS 2
-
-// Win32では10ms以下にはならないので注意
 #define TIMER_INTERVAL 10
 
-static void SdlAudioCallback(void *param, Uint8 *data, int len);
-static Uint32 SdlTimerCallback(Uint32 interval, void *param);
+namespace {
 
-OsDependentSdl::OsDependentSdl() {
-    Time = new AudioTimeInfo();
-    Buffer = new AudioBuffer(AUDIO_CHANNELS, AUDIO_BUFFER_SIZE, AUDIO_BUFFER_BLOCK);
-    AudioOpenFlag = false;
+volatile std::sig_atomic_t BreakRequested = 0;
 
-	UserTimerCallback = new TimerCallback;
-	UserAudioCallback = new AudioCallback;
-
-    if (SDL_Init(SDL_INIT_AUDIO | SDL_INIT_TIMER)) {
-        printf("Failed to Initialize SDL!!\n");
-    }
+void SignalHandler(int)
+{
+    BreakRequested = 1;
 }
 
-OsDependentSdl::~OsDependentSdl() {
+void SdlAudioCallback(void *param, Uint8 *data, int length)
+{
+    auto *instance = static_cast<OsDependentSdl *>(param);
+    instance->AudioMain(reinterpret_cast<short *>(data), length / 4);
+}
+
+Uint32 SdlTimerCallback(Uint32 interval, void *param)
+{
+    auto *instance = static_cast<OsDependentSdl *>(param);
+    instance->UpdateTimer();
+    return interval;
+}
+
+} // namespace
+
+OsDependentSdl::OsDependentSdl()
+    : Buffer(new AudioBuffer(AUDIO_CHANNELS, AUDIO_BUFFER_SIZE, AUDIO_BUFFER_BLOCK)),
+      Time(new AudioTimeInfo()),
+      AudioOpenFlag(false),
+      AudioDevice(0),
+      TimerId(0),
+      InitializedSubsystems(0),
+      ShuttingDown(false),
+      StartTime(std::chrono::steady_clock::now())
+{
+    UserTimerCallback = new TimerCallback;
+    UserAudioCallback = new AudioCallback;
+}
+
+OsDependentSdl::~OsDependentSdl()
+{
+    FreeTimer();
+    FreeAudio();
+    if (InitializedSubsystems != 0) {
+        SDL_QuitSubSystem(InitializedSubsystems);
+        InitializedSubsystems = 0;
+    }
     delete Buffer;
     delete Time;
-	if (UserTimerCallback) delete UserTimerCallback;
-	if (UserAudioCallback) delete UserAudioCallback;
+    delete UserTimerCallback;
+    delete UserAudioCallback;
 }
 
-bool OsDependentSdl::CoInitialize() {
-	return true;
+bool OsDependentSdl::InitSubsystem(Uint32 flags)
+{
+    const Uint32 missing = flags & ~InitializedSubsystems;
+    if (missing == 0) return true;
+    if (SDL_InitSubSystem(missing) != 0) {
+        std::fprintf(stderr, "SDL initialization failed: %s\n", SDL_GetError());
+        return false;
+    }
+    InitializedSubsystems |= missing;
+    return true;
 }
 
-// オーディオ
-bool OsDependentSdl::InitAudio(void *hwnd, int Rate, int BufferSize) {
-    Buffer->SendBuffer = false;
+void OsDependentSdl::QuitSubsystem(Uint32 flags)
+{
+    const Uint32 active = flags & InitializedSubsystems;
+    if (active == 0) return;
+    SDL_QuitSubSystem(active);
+    InitializedSubsystems &= ~active;
+}
+
+bool OsDependentSdl::CoInitialize()
+{
+    return true;
+}
+
+bool OsDependentSdl::InitAudio(void *, int rate, int)
+{
+    if (AudioOpenFlag) return true;
+    if (!InitSubsystem(SDL_INIT_AUDIO)) return false;
+
     Buffer->Reset();
+    Buffer->SetRate(rate);
 
+    SDL_AudioSpec desired{};
+    SDL_AudioSpec obtained{};
+    desired.freq = rate;
+    desired.format = AUDIO_S16SYS;
+    desired.channels = AUDIO_CHANNELS;
+    desired.samples = AUDIO_BUFFER_BLOCK / 2;
+    desired.callback = SdlAudioCallback;
+    desired.userdata = this;
 
-    SDL_AudioSpec af;
-    af.freq     = Rate;
-    af.format   = AUDIO_S16;
-    af.channels = AUDIO_CHANNELS;
-    af.samples  = AUDIO_BUFFER_BLOCK / 2;
-    af.callback = SdlAudioCallback;
-    af.userdata = this;
-
-    // 1msあたりのサンプル数
-    Buffer->SetRate(Rate);
-
-    if (SDL_OpenAudio(&af, NULL) < 0) {
-        printf("Audio Error!!\n");
+    AudioDevice = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, 0);
+    if (AudioDevice == 0) {
+        std::fprintf(stderr, "SDL audio device open failed: %s\n", SDL_GetError());
+        QuitSubsystem(SDL_INIT_AUDIO);
+        return false;
+    }
+    if (obtained.freq != desired.freq || obtained.format != desired.format ||
+        obtained.channels != desired.channels) {
+        std::fprintf(stderr,
+            "Unsupported SDL audio format: %d Hz, format 0x%x, %u channels\n",
+            obtained.freq, obtained.format, obtained.channels);
+        SDL_CloseAudioDevice(AudioDevice);
+        AudioDevice = 0;
+        QuitSubsystem(SDL_INIT_AUDIO);
         return false;
     }
 
+    ShuttingDown.store(false, std::memory_order_release);
     AudioOpenFlag = true;
-
-    SDL_PauseAudio(0);
+    SDL_PauseAudioDevice(AudioDevice, 0);
     return true;
 }
 
-void OsDependentSdl::FreeAudio() {
-    if (AudioOpenFlag) SDL_CloseAudio();
-    SDL_Quit();
+void OsDependentSdl::FreeAudio()
+{
+    ShuttingDown.store(true, std::memory_order_release);
+    if (AudioDevice != 0) {
+        SDL_PauseAudioDevice(AudioDevice, 1);
+        SDL_CloseAudioDevice(AudioDevice);
+        AudioDevice = 0;
+    }
     AudioOpenFlag = false;
+    QuitSubsystem(SDL_INIT_AUDIO);
 }
 
-// タイマー
-static Uint32 SdlTimerCallback(Uint32 interval, void *param) {
-    OsDependentSdl *inst = (OsDependentSdl*)param;
-    inst->UpdateTimer();
-    return(interval);
-}
-
-bool OsDependentSdl::SendAudio(int ms) {
-
-    int s = Buffer->GetLeft();
-
-    //　バッファ送出を開始
-    if (s == 0) {
-        Buffer->SendBuffer = true;
+bool OsDependentSdl::SendAudio(int ms)
+{
+    if (ShuttingDown.load(std::memory_order_acquire)) return false;
+    int available = Buffer->GetLeft();
+    if (available == 0) {
+        Buffer->StartSending();
         return true;
     }
 
-    int UpdateTick = ms;
-    int u = Buffer->TickToSamples(UpdateTick);
+    int samples = std::min(Buffer->TickToSamples(ms), available);
+    samples = std::min(samples, AUDIO_BUFFER_BLOCK);
+    // Stereo samples must form complete frames.
+    samples &= ~1;
+    if (samples <= 0) return true;
 
-    if (u < s) s = u;
-    if (AUDIO_BUFFER_BLOCK < s) { s = AUDIO_BUFFER_BLOCK; }
-    if (s > 0) {
-        Buffer->ClearTick();
-        int smp[AUDIO_BUFFER_BLOCK];
-        memset(smp,0,sizeof(int) * AUDIO_BUFFER_BLOCK);
-        UserAudioCallback->mix = smp;
-        UserAudioCallback->size = s/2;
-        UserAudioCallback->Run();
+    Buffer->ClearTick();
+    int mixed[AUDIO_BUFFER_BLOCK]{};
+    UserAudioCallback->mix = mixed;
+    UserAudioCallback->size = samples / AUDIO_CHANNELS;
+    UserAudioCallback->Run();
+    Buffer->Write(mixed, samples / AUDIO_CHANNELS);
+    return true;
+}
 
-        Buffer->Write(smp,s/2);
+void OsDependentSdl::AudioMain(short *buffer, int frames)
+{
+    if (ShuttingDown.load(std::memory_order_acquire)) {
+        std::memset(buffer, 0, frames * AUDIO_CHANNELS * sizeof(short));
+        return;
+    }
+    Buffer->Read(buffer, frames);
+}
+
+void OsDependentSdl::WaitSendingAudio()
+{
+}
+
+bool OsDependentSdl::InitRealChip()
+{
+    return false;
+}
+
+void OsDependentSdl::FreeRealChip() {}
+void OsDependentSdl::ResetRealChip() {}
+int OsDependentSdl::CheckRealChip() { return 0; }
+int OsDependentSdl::CheckRealChipSB2() { return 0; }
+void OsDependentSdl::OutputRealChip(unsigned int, unsigned int) {}
+void OsDependentSdl::OutputRealChipAdpcm(void *, int) {}
+
+bool OsDependentSdl::InitTimer()
+{
+    if (TimerId != 0) return true;
+    if (!InitSubsystem(SDL_INIT_TIMER)) return false;
+    Time->ResetTick();
+    TimerId = SDL_AddTimer(TIMER_INTERVAL, SdlTimerCallback, this);
+    if (TimerId == 0) {
+        std::fprintf(stderr, "SDL timer initialization failed: %s\n", SDL_GetError());
+        QuitSubsystem(SDL_INIT_TIMER);
+        return false;
     }
     return true;
 }
 
-// オーディオコールバック
-static void SdlAudioCallback(void *param, Uint8 *data, int len) {
-    OsDependentSdl *inst = (OsDependentSdl *)param;
-    inst->AudioMain((short *)data, len / 4);
-}
-
-
-// オーディオ処理メイン
-void OsDependentSdl::AudioMain(short *buffer, int frames) {
-    int Samples = frames * AUDIO_CHANNELS;
-    if (!Buffer->SendBuffer) {
-        memset(buffer, 0, Samples * sizeof(short));
-        return;
+void OsDependentSdl::FreeTimer()
+{
+    if (TimerId != 0) {
+        SDL_RemoveTimer(TimerId);
+        TimerId = 0;
     }
-
-    // 出力
-    int count = Buffer->WriteCount;
-    int pos = Buffer->ReadPosition;
-    short *input = Buffer->AudioData;
-
-    bool Under = false;
-
-    for(int i = 0; i < frames * 2; i++) {
-        if (count <= 0) { Under = true; buffer[i] = 0; continue; }
-
-        buffer[i] = input[pos++];
-        count--;
-        if (pos >= AUDIO_BUFFER_SIZE) pos = 0;
-    }
-
-    if (Under) Buffer->UnderCount++;
-
-    Buffer->ReadPosition = pos;
-    Buffer->WriteCount = count;
+    QuitSubsystem(SDL_INIT_TIMER);
 }
 
-
-
-void OsDependentSdl::WaitSendingAudio() {
+void OsDependentSdl::UpdateTimer()
+{
+    if (ShuttingDown.load(std::memory_order_acquire)) return;
+    const int updateTick = Time->GetUpdateTick();
+    UserTimerCallback->tick = updateTick * 1024;
+    UserTimerCallback->Run();
 }
 
-// 実チップ
-bool OsDependentSdl::InitRealChip() {
-	return true;
-}
-
-void OsDependentSdl::FreeRealChip() {
-}
-
-
-int OsDependentSdl::CheckRealChip() {
-	return 0;
-}
-
-int OsDependentSdl::CheckRealChipSB2() {
-	return 1;
-}
-
-void OsDependentSdl::ResetRealChip() {
-}
-
-
-void OsDependentSdl::OutputRealChip(unsigned int Register, unsigned int Data) {
-}
-
-void OsDependentSdl::OutputRealChipAdpcm(void *pData, int size) {
-}
-
-// タイマー
-bool OsDependentSdl::InitTimer() {
+void OsDependentSdl::ResetTime()
+{
+    StartTime = std::chrono::steady_clock::now();
     Time->ResetTick();
-    TimerId = SDL_AddTimer(TIMER_INTERVAL, SdlTimerCallback, this);
-	return true;
 }
 
-void OsDependentSdl::FreeTimer() {
-    SDL_RemoveTimer(TimerId);
-}
-
-// オーディオ更新用タイマー
-// tickはミリ秒*1024の単位
-void OsDependentSdl::UpdateTimer() {
-    // int UpdateTick = 10;
-    int UpdateTick = Time->GetUpdateTick();
-    int tick = UpdateTick * 1024;
-	UserTimerCallback->tick = tick;
-	UserTimerCallback->Run();
-}
-
-// タイマー初期化時に呼ばれる
-void OsDependentSdl::ResetTime() {
-
-}
-
-// ミリ秒*1024の単位の経過時間
-int OsDependentSdl::GetElapsedTime() {
-	return 0;
-}
-
-// ミリ秒の経過時間
-int OsDependentSdl::GetMilliseconds() {
-	return 0;
-}
-
-// ミリ秒待つ(idle)
-void OsDependentSdl::Delay(int ms) {
-    SDL_Delay(ms);
-}
-
-// プラグイン拡張
-int OsDependentSdl::InitPlugin(Mucom88Plugin *plg, const char *filename, int bootopt) {
-	return 0;
-}
-
-void OsDependentSdl::FreePlugin(Mucom88Plugin *plg) {
-}
-
-
-int OsDependentSdl::ExecPluginVMCommand(Mucom88Plugin *plg, int, int, int, void *, void *)
+int OsDependentSdl::GetElapsedTime()
 {
-	//		OS依存のプラグインVMコマンド処理
-	//
-	return 0;
+    return GetMilliseconds();
 }
 
-int OsDependentSdl::ExecPluginEditorCommand(Mucom88Plugin *plg, int, int, int, void *, void *)
+int OsDependentSdl::GetMilliseconds()
 {
-	//		OS依存のプラグインエディタコマンド処理
-	//
-	return 0;
+    const auto elapsed = std::chrono::steady_clock::now() - StartTime;
+    return static_cast<int>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count());
 }
 
-
-int OsDependentSdl::GetDirectory(char *buf, int size)
+void OsDependentSdl::Delay(int ms)
 {
-	return 0;
+    if (ms > 0) SDL_Delay(static_cast<Uint32>(ms));
 }
 
-int OsDependentSdl::ChangeDirectory(const char *dir)
+int OsDependentSdl::InitPlugin(Mucom88Plugin *, const char *, int) { return -1; }
+void OsDependentSdl::FreePlugin(Mucom88Plugin *) {}
+int OsDependentSdl::ExecPluginVMCommand(Mucom88Plugin *, int, int, int, void *, void *) { return -1; }
+int OsDependentSdl::ExecPluginEditorCommand(Mucom88Plugin *, int, int, int, void *, void *) { return -1; }
+
+int OsDependentSdl::GetDirectory(char *buffer, int size)
 {
-	return 0;
+    if (buffer == nullptr || size <= 0) return -1;
+    return getcwd(buffer, static_cast<size_t>(size)) == nullptr ? -1 : 0;
+}
+
+int OsDependentSdl::ChangeDirectory(const char *directory)
+{
+    return directory != nullptr && chdir(directory) == 0 ? 0 : -1;
 }
 
 int OsDependentSdl::KillFile(const char *filename)
 {
-	return 0;
+    return filename != nullptr && remove(filename) == 0 ? 0 : -1;
 }
-
 
 bool OsDependentSdl::SetBreakHook()
 {
-	return true;
+    BreakRequested = 0;
+    return std::signal(SIGINT, SignalHandler) != SIG_ERR &&
+        std::signal(SIGTERM, SignalHandler) != SIG_ERR;
 }
 
 bool OsDependentSdl::GetBreakStatus()
 {
-	return false;
+    return BreakRequested != 0;
 }
 
-int OsDependentSdl::GetStatus(int option)
+int OsDependentSdl::GetStatus(int)
 {
-	// OsDep内部パラメーター読み込みhub
-	//
-	return 0;
+    return 0;
 }
-
-

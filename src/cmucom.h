@@ -364,7 +364,7 @@ public:
 	~CMucom();
 
 	//	MUCOM88 main service
-	void Init(void *window = NULL, int option = 0, int Rate = 0);
+	bool Init(void *window = NULL, int option = 0, int Rate = 0);
 	void Reset(int option=0);
 	void LoadOriginal(int option);
 	void LoadPlayer(int option);
@@ -380,7 +380,7 @@ public:
 
 	//	Service for command line
 	void PlayLoop();
-	void SetWavFilename(const char *wavFilename);
+	bool SetWavFilename(const char *wavFilename);
 	void Record(int seconds);
 	void RenderAudio(void *mix, int size);
 	void UpdateTime(int tick_ms);
@@ -417,6 +417,7 @@ public:
 
 	//	MUB Header utility
 	int MUBGetHeaderVersion(MUBHED *hed);
+	bool MUBValidate(MUBHED *hed, int totalSize);
 	char *MUBGetData(MUBHED *hed, int &size);
 	char *MUBGetTagData(MUBHED *hed, int &size);
 	char *MUBGetPCMData(MUBHED *hed, int &size);
@@ -474,7 +475,7 @@ public:
 	int GetUseVoiceMax(void) { return fmvoice_usemax; }
 
 	// FM Log Service
-	void SetLogFilename(const char *name);
+	bool SetLogFilename(const char *name);
 
 	// Other Service
 	void GetFMRegMemory(unsigned char* data, int address, int length);

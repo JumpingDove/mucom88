@@ -1,378 +1,479 @@
+// Open MUCOM88 command-line tool.
 
-//
-//	mucom : OpenMucom88 Command Line Tool
-//			MUCOM88 by Yuzo Koshiro Copyright 1987-2020(C) 
-//			Windows version by onion software/onitama since 2018/11
-//			Special thanks to : WING☆, Makoto Wada (Ancient corp.), boukichi, kumatan
-//
+#include <cerrno>
+#include <climits>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <string>
+#include <vector>
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <ctype.h>
-
-#ifdef WIN32
+#ifdef _WIN32
 #include <direct.h>
 #define getcwd _getcwd
 #define CHDIR _chdir
 #else
+#include <strings.h>
 #include <unistd.h>
 #define CHDIR chdir
-#define _MAX_PATH 512
 #endif
 
 #include "cmucom.h"
 
-// mainをSDL_mainにするために必要
-#ifdef USE_SDL
-#include <SDL.h>
-#endif
-
-//#define DEBUG_MUCOM
-
 #define DEFAULT_OUTFILE "mucom88.mub"
-#define DEFAULT_OUTWAVE "mucom88.wav"
-
 #define RENDER_RATE 44100
 #define RENDER_SECONDS 90
+#define MAX_RENDER_SECONDS (6 * 60 * 60)
 
-#ifdef __APPLE__
-#define STRCASECMP strcasecmp
-#else
+namespace {
+
+struct CliOptions {
+    std::string input;
+    std::string pcmFile = MUCOM_DEFAULT_PCMFILE;
+    std::string outputFile = DEFAULT_OUTFILE;
+    std::string wavFile;
+    std::string logFile;
+    std::string voiceFile;
+    std::string pluginFile;
+    std::string rhythmDirectory;
+    std::string driverName;
+    int songLength = 0;
+    bool pcmFileExplicit = false;
+    bool outputFileExplicit = false;
+    bool compile = false;
+    bool compileOnly = false;
+    bool info = false;
+    bool externalRom = false;
+    bool skipPcm = false;
+    bool offline = false;
+    bool dumpVoice = false;
+    bool realChip = false;
+};
+
+void PrintUsage(FILE *stream)
+{
+    std::fprintf(stream,
+        "usage: mucom88 [options] <file.muc|file.mub>\n"
+        "  -c             compile the input as MML\n"
+        "  -g             compile only\n"
+        "  -i             print MML information only\n"
+        "  -x             offline recording mode\n"
+        "  -l <seconds>   recording duration (default: #time or 90)\n"
+        "  -p <file>      PCM data file (default: mucompcm.bin)\n"
+        "  -v <file>      FM voice file\n"
+        "  -o <file>      output MUB file (default: mucom88.mub)\n"
+        "  -w <file>      output WAV file (requires -x)\n"
+        "  -b <file>      output VGM or S98 log file (requires -x)\n"
+        "  -r <dir>       YM2608 rhythm WAV directory\n"
+        "  -f <driver>    force mucom88, mucom88e, or mucom88em\n"
+        "  -e             use external MUCOM driver files\n"
+        "  -k             skip loading the PCM data file\n"
+        "  -d             dump used FM voice parameters\n"
+        "  -h, -?         show this help\n");
+}
+
+bool EqualsIgnoreCase(const std::string &left, const char *right)
+{
 #ifdef _WIN32
-#define STRCASECMP _strcmpi
+    return _stricmp(left.c_str(), right) == 0;
 #else
-#define STRCASECMP strcasecmp
+    return strcasecmp(left.c_str(), right) == 0;
 #endif
-#endif
+}
 
-/*----------------------------------------------------------*/
-
-static void usage1( void )
+bool IsMmlFile(const std::string &filename)
 {
-static const char *p[] = {
-	"usage: mucom88 [options] [filename]",
-	"       -p [filename] setload PCM file name",
-	"       -v [filename] set load voice file name",
-	"       -o [filename] set output MUB file name",
-	"       -w [filename] set output WAV file name",
-	"       -b [filename] set output log(.vgm/.s98) file name",
-	"       -c [filename] compile mucom88 MML file name",
-	"       -i [filename] info print mucom88 MML file name",
+    const std::string::size_type dot = filename.find_last_of('.');
+    return dot != std::string::npos && EqualsIgnoreCase(filename.substr(dot), ".muc");
+}
+
+bool ParsePositiveInteger(const char *text, int &value)
+{
+    if (text == nullptr || *text == '\0') return false;
+    char *end = nullptr;
+    errno = 0;
+    const long parsed = std::strtol(text, &end, 10);
+    if (errno != 0 || *end != '\0' || parsed <= 0 || parsed > MAX_RENDER_SECONDS) {
+        return false;
+    }
+    value = static_cast<int>(parsed);
+    return true;
+}
+
+bool ParseArguments(int argc, char **argv, CliOptions &options, bool &showHelp)
+{
+    showHelp = false;
+    auto requireValue = [&](int &index, const char *option) -> const char * {
+        if (index + 1 >= argc || argv[index + 1][0] == '-') {
+            std::fprintf(stderr, "mucom88: option %s requires a value\n", option);
+            return nullptr;
+        }
+        return argv[++index];
+    };
+
+    for (int index = 1; index < argc; ++index) {
+        const char *argument = argv[index];
+        if (argument[0] != '-') {
+            if (!options.input.empty()) {
+                std::fprintf(stderr, "mucom88: only one input file may be specified\n");
+                return false;
+            }
+            options.input = argument;
+            continue;
+        }
+        if (argument[1] == '\0' || argument[2] != '\0') {
+            std::fprintf(stderr, "mucom88: unknown option: %s\n", argument);
+            return false;
+        }
+
+        const char option = argument[1];
+        const char *value = nullptr;
+        switch (option) {
+        case 'h':
+        case '?':
+            showHelp = true;
+            break;
+        case 'c': options.compile = true; break;
+        case 'g': options.compileOnly = true; break;
+        case 'i': options.info = true; break;
+        case 'e': options.externalRom = true; break;
+        case 'k': options.skipPcm = true; break;
+        case 'x': options.offline = true; break;
+        case 'd': options.dumpVoice = true; break;
+        case 's': options.realChip = true; break;
+        case 'p':
+            value = requireValue(index, "-p");
+            if (value == nullptr) return false;
+            options.pcmFile = value;
+            options.pcmFileExplicit = true;
+            break;
+        case 'v':
+            value = requireValue(index, "-v");
+            if (value == nullptr) return false;
+            options.voiceFile = value;
+            break;
+        case 'o':
+            value = requireValue(index, "-o");
+            if (value == nullptr) return false;
+            options.outputFile = value;
+            options.outputFileExplicit = true;
+            break;
+        case 'w':
+            value = requireValue(index, "-w");
+            if (value == nullptr) return false;
+            options.wavFile = value;
+            break;
+        case 'b':
+            value = requireValue(index, "-b");
+            if (value == nullptr) return false;
+            options.logFile = value;
+            break;
+        case 'a':
+            value = requireValue(index, "-a");
+            if (value == nullptr) return false;
+            options.pluginFile = value;
+            break;
+        case 'f':
+            value = requireValue(index, "-f");
+            if (value == nullptr) return false;
+            options.driverName = value;
+            break;
+        case 'r':
+            value = requireValue(index, "-r");
+            if (value == nullptr) return false;
+            options.rhythmDirectory = value;
+            break;
+        case 'l':
+            value = requireValue(index, "-l");
+            if (value == nullptr || !ParsePositiveInteger(value, options.songLength)) {
+                std::fprintf(stderr,
+                    "mucom88: recording length must be between 1 and %d seconds\n",
+                    MAX_RENDER_SECONDS);
+                return false;
+            }
+            break;
+        default:
+            std::fprintf(stderr, "mucom88: unknown option: %s\n", argument);
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ValidateOptions(CliOptions &options)
+{
+    if (options.input.empty()) {
+        std::fprintf(stderr, "mucom88: no input file specified\n");
+        return false;
+    }
+
+    options.compile = options.compile || IsMmlFile(options.input);
+    if (options.info &&
+        (options.compileOnly || options.offline || !options.wavFile.empty() ||
+         !options.logFile.empty() || options.dumpVoice)) {
+        std::fprintf(stderr, "mucom88: -i cannot be combined with playback or output options\n");
+        return false;
+    }
+    if (options.compileOnly && !options.compile) {
+        std::fprintf(stderr, "mucom88: -g requires an MML input or -c\n");
+        return false;
+    }
+    if ((!options.wavFile.empty() || !options.logFile.empty()) && !options.offline) {
+        std::fprintf(stderr, "mucom88: -w and -b require offline mode (-x)\n");
+        return false;
+    }
+    if (options.songLength > 0 && !options.offline) {
+        std::fprintf(stderr, "mucom88: -l is only valid with offline mode (-x)\n");
+        return false;
+    }
+    if (options.outputFileExplicit && !options.compile) {
+        std::fprintf(stderr, "mucom88: -o is only valid when compiling MML\n");
+        return false;
+    }
+#ifndef MUCOM88WIN
+    if (!options.pluginFile.empty()) {
+        std::fprintf(stderr, "mucom88: plugins (-a) are not supported on macOS/SDL builds\n");
+        return false;
+    }
+    if (options.realChip) {
+        std::fprintf(stderr, "mucom88: SCCI real-chip output (-s) is not supported on macOS\n");
+        return false;
+    }
+#endif
+    return true;
+}
+
+bool ResolvePaths(CliOptions &options)
+{
+    namespace fs = std::filesystem;
+    std::error_code error;
+    const fs::path launchDirectory = fs::current_path(error);
+    if (error) {
+        std::fprintf(stderr, "mucom88: cannot determine the current directory\n");
+        return false;
+    }
+
+    const fs::path input = fs::absolute(fs::path(options.input), error);
+    if (error) {
+        std::fprintf(stderr, "mucom88: invalid input path: %s\n", options.input.c_str());
+        return false;
+    }
+    const fs::path inputDirectory = input.parent_path();
+    options.input = input.lexically_normal().string();
+
+    auto fromLaunchDirectory = [&](std::string &path) {
+        if (!path.empty() && fs::path(path).is_relative()) {
+            path = (launchDirectory / path).lexically_normal().string();
+        }
+    };
+    fromLaunchDirectory(options.outputFile);
+    fromLaunchDirectory(options.wavFile);
+    fromLaunchDirectory(options.logFile);
+    fromLaunchDirectory(options.voiceFile);
+    fromLaunchDirectory(options.rhythmDirectory);
+
+    if (options.pcmFileExplicit) {
+        fromLaunchDirectory(options.pcmFile);
+    } else {
+        const fs::path besideInput = inputDirectory / MUCOM_DEFAULT_PCMFILE;
+        if (fs::exists(besideInput, error) && !error) {
+            options.pcmFile = besideInput.lexically_normal().string();
+        } else {
+            error.clear();
+            options.pcmFile = (launchDirectory / MUCOM_DEFAULT_PCMFILE).lexically_normal().string();
+        }
+    }
+    return true;
+}
+
+class ScopedWorkingDirectory {
+public:
+    explicit ScopedWorkingDirectory(const std::string &directory) : changed(false)
+    {
+        if (directory.empty()) return;
+        std::vector<char> buffer(4096);
+        if (getcwd(buffer.data(), buffer.size()) == nullptr) return;
+        original = buffer.data();
+        changed = CHDIR(directory.c_str()) == 0;
+    }
+
+    ~ScopedWorkingDirectory()
+    {
+        if (changed) CHDIR(original.c_str());
+    }
+
+    bool IsValid(const std::string &directory) const
+    {
+        return directory.empty() || changed;
+    }
+
+private:
+    std::string original;
+    bool changed;
+};
+
+void PrintMessages(CMucom &mucom)
+{
+    mucom.PrintInfoBuffer();
+    std::fputs(mucom.GetMessageBuffer(), stdout);
+}
+
+} // namespace
+
+int main(int argc, char *argv[])
+{
+    CliOptions options;
+    bool showHelp = false;
+    if (!ParseArguments(argc, argv, options, showHelp)) {
+        PrintUsage(stderr);
+        return 2;
+    }
+    if (showHelp) {
+        PrintUsage(stdout);
+        return 0;
+    }
+    if (!ValidateOptions(options)) {
+        PrintUsage(stderr);
+        return 2;
+    }
+    if (!ResolvePaths(options)) return 1;
+
+    const std::filesystem::path inputDirectory =
+        std::filesystem::path(options.input).parent_path();
+    ScopedWorkingDirectory inputWorkingDirectory(inputDirectory.string());
+    if (!inputWorkingDirectory.IsValid(inputDirectory.string())) {
+        std::fprintf(stderr, "mucom88: cannot enter input directory: %s\n",
+            inputDirectory.string().c_str());
+        return 1;
+    }
+
+    const bool noAudio = options.info || options.compileOnly || options.offline;
+    int vmOptions = noAudio ? MUCOM_OPTION_STEP : 0;
 #ifdef MUCOM88WIN
-	"       -a [filename] add external plugin",
+    if (options.realChip) vmOptions |= MUCOM_OPTION_SCCI | MUCOM_OPTION_FMMUTE;
 #endif
-	"       -r [pathname] set rhythm WAV pathname",
-	"       -f [drivername] Force driver mode",
-	"       -e Use external ROM files",
-	"       -s Use SCCI device",
-	"       -k Skip PCM load",
-	"       -x Recording mode",
-	"       -d Dump used voice parameter",
-	"       -l [n] Set recording lengh to n seconds ",
-	"       -g Compile only",
-	"       -?, -h Show help message ",
-	NULL };
-	int i;
-	for (i = 0; p[i]; i++) {
-		printf("%s\n", p[i]);
-	}
+
+    int compileOptions = options.compile ? MUCOM_CMPOPT_COMPILE : 0;
+    if (options.externalRom) compileOptions |= MUCOM_CMPOPT_USE_EXTROM;
+
+    CMucom mucom;
+    {
+        ScopedWorkingDirectory rhythmDirectory(options.rhythmDirectory);
+        if (!rhythmDirectory.IsValid(options.rhythmDirectory)) {
+            std::fprintf(stderr, "mucom88: cannot enter rhythm directory: %s\n",
+                options.rhythmDirectory.c_str());
+            return 1;
+        }
+        if (!mucom.Init(nullptr, vmOptions, RENDER_RATE)) {
+            std::fprintf(stderr, "mucom88: initialization failed\n");
+            return 1;
+        }
+    }
+
+#ifdef MUCOM88WIN
+    if (!options.pluginFile.empty() &&
+        mucom.AddPlugins(options.pluginFile.c_str(), 0) != 0) {
+        std::fprintf(stderr, "mucom88: failed to load plugin: %s\n",
+            options.pluginFile.c_str());
+        return 1;
+    }
+#endif
+
+    int driverMode = MUCOM_DRIVER_NONE;
+    if (!options.driverName.empty()) {
+        driverMode = mucom.GetDriverModeString(options.driverName.c_str());
+    } else if (options.compile) {
+        driverMode = mucom.GetDriverMode(const_cast<char *>(options.input.c_str()));
+    } else {
+        driverMode = mucom.GetDriverModeMUB(const_cast<char *>(options.input.c_str()));
+    }
+    if (driverMode == MUCOM_DRIVER_MUCOMDOTNET) {
+        std::fprintf(stderr, "mucom88: the mucomDotNET driver is not supported\n");
+        return 2;
+    }
+    if (driverMode == MUCOM_DRIVER_UNKNOWN && !options.driverName.empty()) {
+        std::fprintf(stderr, "mucom88: unknown driver: %s\n", options.driverName.c_str());
+        return 2;
+    }
+    mucom.SetDriverMode(driverMode);
+    mucom.Reset(compileOptions);
+
+    if (options.info) {
+        if (mucom.ProcessFile(options.input.c_str()) != 0) {
+            PrintMessages(mucom);
+            return 1;
+        }
+        PrintMessages(mucom);
+        return 0;
+    }
+
+    if (options.compile) {
+        if (!options.skipPcm && mucom.LoadPCM(options.pcmFile.c_str()) != 0) {
+            PrintMessages(mucom);
+            return 1;
+        }
+        if (!options.voiceFile.empty() &&
+            mucom.LoadFMVoice(options.voiceFile.c_str()) != 0) {
+            PrintMessages(mucom);
+            return 1;
+        }
+        if (mucom.CompileFile(options.input.c_str(), options.outputFile.c_str()) < 0) {
+            PrintMessages(mucom);
+            return 1;
+        }
+        PrintMessages(mucom);
+        if (options.compileOnly) return 0;
+
+        mucom.Reset(0);
+        if (mucom.LoadMusic(options.outputFile.c_str()) < 0) {
+            PrintMessages(mucom);
+            return 1;
+        }
+    } else if (mucom.LoadMusic(options.input.c_str()) < 0) {
+        PrintMessages(mucom);
+        return 1;
+    }
+
+    if (!options.logFile.empty() && !mucom.SetLogFilename(options.logFile.c_str())) {
+        std::fprintf(stderr, "mucom88: cannot open log output: %s\n",
+            options.logFile.c_str());
+        return 1;
+    }
+    if (!options.wavFile.empty() && !mucom.SetWavFilename(options.wavFile.c_str())) {
+        std::fprintf(stderr, "mucom88: cannot open WAV output: %s\n",
+            options.wavFile.c_str());
+        return 1;
+    }
+
+    if (mucom.Play(0) != 0) {
+        PrintMessages(mucom);
+        return 1;
+    }
+
+    if (options.dumpVoice) {
+        const int maximum = mucom.GetUseVoiceMax();
+        for (int index = 0; index < maximum; ++index) {
+            mucom.DumpFMVoice(mucom.GetUseVoiceNum(index));
+        }
+    }
+    PrintMessages(mucom);
+
+    if (options.offline) {
+        int seconds = options.songLength;
+        if (seconds <= 0) {
+            seconds = std::atoi(mucom.GetInfoBufferByName("time"));
+            if (seconds <= 0) seconds = RENDER_SECONDS;
+        }
+        if (!options.logFile.empty()) {
+            std::printf("#Record to %s (%d sec).\n", options.logFile.c_str(), seconds);
+        }
+        if (!options.wavFile.empty()) {
+            std::printf("#Record to %s (%d sec).\n", options.wavFile.c_str(), seconds);
+        }
+        mucom.Record(seconds);
+    } else {
+        mucom.PlayLoop();
+    }
+    return 0;
 }
-
-/*----------------------------------------------------------*/
-
-int main( int argc, char *argv[] )
-{
-	char a1,a2;
-	int b,st;
-	int cmpopt,ppopt,dumpopt;
-	int scci_opt;
-	char fname[1024];
-	const char *pcmfile;
-	const char *outfile;
-	const char *wavfile;
-	const char *logfile;
-	const char *voicefile;
-	const char* pluginfile;
-	const char* rhythmdir;
-	const char* drivername;
-
-#if defined(USE_SDL) && defined(_WIN32)
-	freopen( "CON", "w", stdout );
-	freopen( "CON", "w", stderr );
-#endif
-
-	//	check switch and prm
-
-#ifdef DEBUG_MUCOM
-	{
-		CMucom mucom;
-
-		mucom.Init();
-
-		mucom.Reset(0);
-		//mucom.ProcessFile("test.muc");
-		//mucom.PrintInfoBuffer();
-
-		mucom.LoadPCM();
-		mucom.LoadMusic("test2.mub");
-		mucom.Play(0);
-		mucom.PrintInfoBuffer();
-
-		//mucom.Reset(2);
-		//mucom.LoadPCM();
-		//mucom.CompileFile("sampl1.muc","test2.mub");
-
-		puts(mucom.GetMessageBuffer());
-
-		while (1) {
-			Sleep(20);
-		}
-
-
-		return 0;
-	}
-#endif
-
-	if (argc<2) { usage1();return -1; }
-
-	st = 0; ppopt = 0; cmpopt = 0; scci_opt = 0; dumpopt = 0;
-	pcmfile = MUCOM_DEFAULT_PCMFILE;
-	outfile = DEFAULT_OUTFILE;
-	wavfile = NULL;
-	logfile = NULL;
-	voicefile = NULL;
-	pluginfile = NULL;
-	rhythmdir = NULL;
-	drivername = NULL;
-	fname[0] = 0;
-
-	bool compile_only = false;
-
-	int song_length = 0;
-
-	for (b=1;b<argc;b++) {
-		a1=*argv[b];a2=tolower(*(argv[b]+1));
-		if (a1!='-') {
-			strcpy(fname,argv[b]);
-		} else {
-			switch (a2) {
-			case 'p':
-				pcmfile = argv[b + 1]; b++;
-				ppopt = 0;
-				break;
-			case 'v':
-				voicefile = argv[b + 1]; b++;
-				break;
-			case 'o':
-				outfile = argv[b + 1]; b++;
-				break;
-			case 'w':
-				wavfile = argv[b + 1]; b++;
-				break;
-			case 'b':
-				logfile = argv[b + 1]; b++;
-				break;			
-			case 'a':
-				pluginfile = argv[b + 1]; b++;
-				break;
-			case 'f':
-				drivername = argv[b + 1]; b++;
-				break;
-			case 'l':
-				song_length = atoi(argv[b + 1]); b++;
-				break;
-			case 'c':
-				cmpopt |= MUCOM_CMPOPT_COMPILE;
-				break;
-			case 'e':
-				cmpopt |= MUCOM_CMPOPT_USE_EXTROM;
-				break;
-			case 'k':
-				ppopt = 1;
-				break;
-			case 'i':
-				cmpopt |= MUCOM_CMPOPT_INFO;
-				break;
-			case 's':
-				scci_opt = 1;
-				break;
-			case 'x':
-				cmpopt |= MUCOM_CMPOPT_STEP;
-				break;
-			case 'g':
-				compile_only = true;
-				break;
-			case 'd':
-				dumpopt = 1;
-				break;
-			case '?': case 'h':
-				usage1(); 
-				return -1;
-			case 'r':
-				rhythmdir = argv[b + 1]; b++;
-				break;
-			default:
-				st=1;break;
-			}
-		}
-	}
-
-	if (st) { printf("#Illegal switch selected.\n");return 1; }
-	if (fname[0]==0) { printf("#No file name selected.\n");return 1; }
-
-	char mydir[_MAX_PATH];
-	getcwd( mydir, _MAX_PATH );
-	if (rhythmdir) {
-		CHDIR( rhythmdir );							// リズム音源読み込みディレクトリ
-	}
-
-	//		call main
-	CMucom mucom;
-
-	if (cmpopt & MUCOM_CMPOPT_STEP) {
-		mucom.Init(NULL, cmpopt, RENDER_RATE);
-	}
-	else {
-		if (scci_opt) {
-			printf("Use SCCI.\n");
-			mucom.Init(NULL, MUCOM_OPTION_SCCI | MUCOM_OPTION_FMMUTE, RENDER_RATE);
-		}
-		else {
-			mucom.Init();
-		}
-	}
-
-	// ログ設定
-	if (logfile) {
-		mucom.SetLogFilename(logfile);
-	}
-
-	// 初期化
-	if (wavfile) {
-		mucom.SetWavFilename(wavfile);
-	}
-
-	if (pluginfile) {
-		printf("#Adding plugin %s.\n", pluginfile);
-		int plgres = mucom.AddPlugins(pluginfile, 0);
-		if (plgres) {
-			printf("#Error adding plugin.(%d)\n", plgres);
-		}
-	}
-
-
-	bool play_direct = false;
-	const char* ext = strrchr(fname, '.');
-
-	// mmlファイルはコンパイルをするようにする
-	if (ext != NULL && STRCASECMP(ext, ".muc") == 0) cmpopt |= MUCOM_CMPOPT_COMPILE;
-
-	int driver_mode;
-	if (drivername != NULL) {
-		driver_mode = mucom.GetDriverModeString(drivername);
-	}
-	else {
-		if (cmpopt & MUCOM_CMPOPT_COMPILE) {
-			driver_mode = mucom.GetDriverMode(fname);
-		}
-		else {
-			driver_mode = mucom.GetDriverModeMUB(fname);
-		}
-	}
-
-	if (driver_mode >= MUCOM_DRIVER_MUCOMDOTNET) {
-		printf("#Error MucomDotNet driver specified, Trying normal driver instead.\n");
-	}
-	mucom.SetDriverMode(driver_mode);
-
-
-	mucom.Reset(cmpopt);
-	st = 0;
-
-	if (rhythmdir) {
-		CHDIR(mydir);								// カレントに戻す
-	}
-
-	if (cmpopt & MUCOM_CMPOPT_INFO) {
-		mucom.ProcessFile(fname);
-		mucom.PrintInfoBuffer();
-		puts(mucom.GetMessageBuffer());
-		return 0;
-	}
-
-	if (cmpopt & MUCOM_CMPOPT_COMPILE) {
-		if (ppopt == 0) {
-			mucom.LoadPCM(pcmfile);
-		}
-		if (voicefile != NULL) {
-			mucom.LoadFMVoice(voicefile);
-		}
-		if (mucom.CompileFile(fname, outfile) < 0) {
-			st = 1;
-		}
-		play_direct = true;
-	} else {
-		if (mucom.LoadMusic(fname) < 0) {
-			st = 1;
-		}
-	}
-
-	if (st) {
-		mucom.PrintInfoBuffer();
-		puts(mucom.GetMessageBuffer());
-		return st;
-	}
-
-	if (play_direct) {
-		mucom.PrintInfoBuffer();
-		puts(mucom.GetMessageBuffer());
-
-		mucom.Reset(0);
-		if (mucom.LoadMusic(outfile) < 0) {
-			st = 1;
-		}
-		st = mucom.Play(0);
-
-		//mucom.PlayMemory(); 
-	} else { 
-		st = mucom.Play(0); 
-	}
-
-	if (st == 0) {
-		if (dumpopt) {
-			int i, max;
-			max = mucom.GetUseVoiceMax();
-			for (i = 0; i < max; i++) {
-				mucom.DumpFMVoice(mucom.GetUseVoiceNum(i));
-			}
-		}
-	}
-
-	mucom.PrintInfoBuffer();
-	puts(mucom.GetMessageBuffer());
-
-	// コンパイルのみ
-	if (play_direct && compile_only) return st;
-
-	if (st == 0) {
-		if (cmpopt & MUCOM_CMPOPT_STEP) {
-			if (song_length <= 0) {
-				const char* timetag = mucom.GetInfoBufferByName("time");
-				song_length = atoi(timetag);
-				if (song_length <= 0) {
-					song_length = RENDER_SECONDS;
-				}
-			}
-			if (logfile != NULL) printf("#Record to %s (%d sec).", logfile, song_length);
-			if (wavfile != NULL) printf( "#Record to %s (%d sec).", wavfile, song_length );
-			mucom.Record(song_length);
-		}
-		else {
-			mucom.PlayLoop();
-		}
-	}
-
-	return st;
-}
-

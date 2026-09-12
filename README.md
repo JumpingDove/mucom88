@@ -22,6 +22,31 @@ OPEN MUCOM88プロジェクトは、オリジナルのMUCOM88ソースコード�
 
 # ビルド方法
 
+## macOS コマンドライン版
+
+macOS では SDL2 と iconv を使用します。Homebrew を使用する例です。
+
+```sh
+brew install cmake sdl2
+cmake -S src -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+```
+
+Makefile を直接使用する場合は、`src` ディレクトリで `make` を実行します。SDL2 の検出には
+`sdl2-config` を使用します。
+
+```sh
+cd src
+make
+```
+
+MML のコンパイルだけを行う `-g`、情報表示の `-i`、WAV/VGM/S98 を生成する `-x` は
+音声デバイスを開きません。リアルタイム再生は Ctrl-C で正常終了します。オプション一覧は
+`mucom88 -h` で確認できます。古い `xcode/miniosx` プロジェクトは SDL 1.2/i386 用であり、
+現在の macOS ビルドには使用しません。移植内容と制約は `IMPORT-FOR-MACOS.md` を参照してください。
+
+## 従来のビルド環境
+
 	srcフォルダにVisual Studio 2017,2019用のプロジェクトファイルが含まれています
 	xcodeフォルダにMacOSX版のXCode用プロジェクトファイルが含まれています
 	HSPプラグイン及び、HSPソースコードはhsppluginフォルダに含まれています

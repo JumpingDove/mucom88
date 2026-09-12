@@ -31,6 +31,26 @@ Disk images for the original MUCOM 88 distribution can be found on Ancient
 Corp.'s [website](https://www.ancient.co.jp/~mucom88/).
 
 # Building
+
+## macOS command-line build
+
+The macOS CLI uses SDL2 and iconv. With Homebrew:
+
+```sh
+brew install cmake sdl2
+cmake -S src -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+```
+
+Alternatively, run `make` in `src`; the Makefile discovers SDL2 through
+`sdl2-config`. Compile-only (`-g`), information (`-i`), and offline output
+(`-x`) do not open an audio device. Real-time playback exits cleanly on
+Ctrl-C. Run `mucom88 -h` for all CLI options. The old `xcode/miniosx` project
+targets SDL 1.2/i386 and is not used for current macOS builds. See
+`IMPORT-FOR-MACOS.md` for porting details and remaining limitations.
+
+## Legacy build environments
+
 * The `src` folder contains project files for Visual Studio 2017.
 * The `xcode` folder contains a project file for Mac OS X XCode.
 * Support for [Hot Soup Processor](hsp.tv) (Japanese only) is found in the
@@ -39,8 +59,7 @@ Corp.'s [website](https://www.ancient.co.jp/~mucom88/).
 * A `Makefile` is also provided in `src`- it works on Linux and Win32 if using
   [msys2](https://www.msys2.org).
 
-When compiling using the `Makefile`, Linux builds _require_
-[SDL 1.2](https://www.libsdl.org/download-1.2.php). Using SDL is optional on
+When compiling using the `Makefile`, current Unix builds require SDL2. Using SDL is optional on
 Windows, and is disabled by setting `OS_WIN32 = 1` in `Makefile.settings`.
 `make` must be invoked while `src` is your working directory.
 

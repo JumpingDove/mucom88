@@ -8,8 +8,8 @@
 
 CXX = g++
 CC = gcc
-CFLAGS = 
-CXXFLAGS = 
+CFLAGS = -std=c11
+CXXFLAGS = -std=c++17
 # CXXFLAGS += -Wno-write-strings
 COMMON_FLAGS = -Wall -O3
 # COMMON_FLAGS += -Wall -Werror
@@ -19,6 +19,7 @@ OBJS_DIR = objs
 TARGET_NAME = mucom88
 LIBS =
 EXT_LIBS =
+SDL_CONFIG ?= sdl2-config
 
 # 設定ファイル
 include Makefile.setting
@@ -115,21 +116,21 @@ DEP_SRCS += sdl/osdep_sdl.cpp
 DEP_SRCS += sdl/audiobuffer.cpp
 DEP_SRCS += sdl/audiotime.cpp
 
-SDL_CFLAGS = `sdl-config --cflags` -DUSE_SDL
+SDL_CFLAGS = `$(SDL_CONFIG) --cflags` -DUSE_SDL
 COMMON_FLAGS += $(SDL_CFLAGS)
 
 ifeq ($(STATIC),1)
 ifeq ($(OS_LINUX),1)
-SDL_LIBS =  `sdl-config --static-libs` -static-libgcc -static-libstdc++
+SDL_LIBS =  `$(SDL_CONFIG) --static-libs` -static-libgcc -static-libstdc++
 LDFLAGS +=  -Wl,-rpath,/usr/local/lib,-rpath,/usr/lib/x86_64-linux-gnu,-rpath,/usr/lib/gcc/x86_64-linux-gnu
 else
-SDL_LIBS =  `sdl-config --static-libs`
+SDL_LIBS =  `$(SDL_CONFIG) --static-libs`
 endif
 else
 ifeq ($(OS_LINUX),1)
-SDL_LIBS =  `sdl-config --libs` -lX11
+SDL_LIBS =  `$(SDL_CONFIG) --libs` -lX11
 else 
-SDL_LIBS =  `sdl-config --libs`
+SDL_LIBS =  `$(SDL_CONFIG) --libs`
 endif
 endif
 
@@ -146,11 +147,12 @@ endif
 
 
 # 文字コード変換
-SRCS += utils/codeconv/codeconv_dummy.cpp
-
 ifdef USE_ICONV
-COMMON_FLAGS += -DDUSE_ICONV
+COMMON_FLAGS += -DUSE_ICONV
 SRCS += utils/codeconv/codeconv_iconv.cpp
+LIBS += -liconv
+else
+SRCS += utils/codeconv/codeconv_dummy.cpp
 endif
 
 
@@ -237,4 +239,3 @@ clean :
 	rm -f $(TARGET_PCMTOOL)
 	rm -f $(TARGET_MINIPLAY) $(TARGET_DEPTEST) $(TARGET_MODTEST) $(TARGET)
 	rm -rf $(OBJS_DIR)
-

@@ -34,7 +34,6 @@ AudioSdl::~AudioSdl() {
 
 // オーディオ開始
 bool AudioSdl::Open(int rate) {
-    Buffer->SendBuffer = false;
     Buffer->Reset();
 
     if (SDL_Init(SDL_INIT_AUDIO | SDL_INIT_TIMER)) {
@@ -94,15 +93,16 @@ void AudioSdl::UpdateAudioTimer() {
 
     //　バッファ送出を開始
     if (s == 0) {
-        Buffer->SendBuffer = true;
+        Buffer->StartSending();
         return;
     }
 
     int UpdateTick = Time->GetUpdateTick();
     int u = Buffer->TickToSamples(UpdateTick);
 
-    if (s < u) s = u;
+    if (u < s) s = u;
     if (AUDIO_BUFFER_BLOCK < s) s = AUDIO_BUFFER_BLOCK;
+    s &= ~1;
 
     UpdateSamples(s);
 }
@@ -128,31 +128,5 @@ static void SdlAudioCallback(void *param, Uint8 *data, int len) {
 
 // オーディオ処理メイン
 void AudioSdl::AudioMain(short *buffer, int frames) {
-    int Samples = frames * AUDIO_CHANNELS;
-    if (!Buffer->SendBuffer) {
-        memset(buffer, 0, Samples * sizeof(short));
-        return;
-    }
-
-    // 出力
-    int count = Buffer->WriteCount;
-    int pos = Buffer->ReadPosition;
-    short *input = Buffer->AudioData;
-
-    bool Under = false;
-
-    for(int i = 0; i < frames * 2; i++) {
-        if (count <= 0) { Under = true; buffer[i] = 0; continue; }
-
-        buffer[i] = input[pos++];
-        count--;
-        if (pos >= AUDIO_BUFFER_SIZE) pos = 0;
-    }
-
-    if (Under) Buffer->UnderCount++;
-
-    Buffer->ReadPosition = pos;
-    Buffer->WriteCount = count;
+    Buffer->Read(buffer, frames);
 }
-
-
