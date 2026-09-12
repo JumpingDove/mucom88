@@ -753,3 +753,125 @@ clean buildがwarningなしで成功した。CMake executableは調査環境に�
 - install後のdefault data directory、SDL2同梱、`@rpath`、codesign、notarization
 - 曲の自然終了検出。初期仕様は従来通りCtrl-C停止
 - `pcmtool`のpath/name境界修正と独立target化
+
+## 13. macOS CLIのビルド手順
+
+### 13.1 前提環境
+
+初期CLI移植では、64 bit macOS、Apple clang、SDL2、iconvを使用する。開発環境の依存関係は
+Homebrewで導入する方法を標準とする。
+
+```sh
+xcode-select --install
+brew install cmake sdl2
+```
+
+`xcode-select --install`で既にCommand Line Toolsが導入済みの場合、再インストールは不要である。
+iconvはmacOS SDKにも含まれるが、Makefile buildでは環境に応じてHomebrewのlibraryが使用される。
+以下でtoolとSDL2を確認できる。
+
+```sh
+clang++ --version
+cmake --version
+sdl2-config --version
+```
+
+旧SDL 1.2の`SDL.framework`、`sdl-config`、`xcode/miniosx` projectは使用しない。
+
+### 13.2 CMakeによる推奨ビルド
+
+repositoryのtop directoryで次を実行する。
+
+```sh
+cmake -S src -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+```
+
+生成されるCLI executableは通常`build/mucom88`である。build directoryを作り直す場合は、既存の
+成果物が不要であることを確認してから別のbuild directoryを指定するか、既存directoryを削除する。
+source tree内で直接CMakeを実行するin-source buildは行わない。
+
+Debug buildは独立したdirectoryを使う。
+
+```sh
+cmake -S src -B build-debug -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-debug --parallel
+```
+
+任意のprefixへinstallする場合は次のように指定する。現在のinstall targetはCLI executableのみで、
+`mucompcm.bin`、`voice.dat`、SDL2 dylibの配置はまだ自動化されていない。
+
+```sh
+cmake -S src -B build -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INSTALL_PREFIX="$PWD/stage"
+cmake --build build --parallel
+cmake --install build
+```
+
+### 13.3 Makefileによるビルド
+
+CMakeを使用しない場合は`src` directoryでbuildする。SDL2は`sdl2-config`から検出される。
+
+```sh
+cd src
+make
+```
+
+生成物は`src/mucom88`である。compilerやSDL2 config helperを明示する場合は次のように指定できる。
+
+```sh
+make CC=clang CXX=clang++ SDL_CONFIG=sdl2-config
+```
+
+通常の成果物を削除する場合は`src` directoryで`make clean`を実行する。ただし同directory内の
+対象名と`objs` directoryが削除対象になるため、利用者自身の同名fileを置かないこと。
+
+### 13.4 最小動作確認
+
+以下はrepository top directoryで、CMake buildのexecutableを使う例である。Makefile buildでは
+`./build/mucom88`を`./src/mucom88`へ読み替える。
+
+```sh
+./build/mucom88 -h
+./build/mucom88 -g -o /tmp/sampl1.mub package/sampl1.muc
+./build/mucom88 -x -l 1 \
+  -w /tmp/sampl1.wav \
+  -b /tmp/sampl1.vgm \
+  /tmp/sampl1.mub
+```
+
+期待する結果は、helpがexit 0、compileとoffline renderがexit 0である。`sampl1.mub`は65,647 byte、
+1秒WAVは176,444 byte（44.1 kHz、16 bit、stereo）になる。VGMは実装確認時点で2,396 byteだった。
+
+リアルタイム再生は次のように起動し、Ctrl-Cで終了する。
+
+```sh
+./build/mucom88 package/sampl1.muc
+```
+
+compile-only（`-g`）、情報表示（`-i`）、offline output（`-x`）はaudio deviceを開かないため、
+GUI sessionや音声出力のないCI環境でも使用できる。
+
+### 13.5 architectureの確認とUniversal Binary
+
+通常のbuildは実行中macOSのnative architectureを生成する。生成物は次で確認する。
+
+```sh
+file build/mucom88
+lipo -info build/mucom88
+```
+
+arm64とx86_64を含むUniversal Binaryを試作する場合は、CMake configure時にarchitectureを指定する。
+
+```sh
+cmake -S src -B build-universal \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+cmake --build build-universal --parallel
+lipo -info build-universal/mucom88
+```
+
+この指定では、SDL2を含む全link dependencyが両architectureを収録している必要がある。Homebrewの
+通常installが片方のarchitectureしか提供しない場合、Universal linkは失敗する。Universal Binary、
+最低対応macOSの`CMAKE_OSX_DEPLOYMENT_TARGET`、SDL2同梱、codesign、notarizationは未検証であり、
+release配布前に別途確認する。
