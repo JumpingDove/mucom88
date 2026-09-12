@@ -22,3 +22,4 @@ src/mucom88.vcxproj.user
 src/.vs/
 src/Debug
 
+.vscode/
