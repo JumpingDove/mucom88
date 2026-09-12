@@ -215,8 +215,9 @@ macOS の path と terminal は UTF-8 が基本である。一方、MUCOM88 の�
 - iconv 実装も変換エラー、出力不足、descriptor 作成失敗を処理しない
 - `mucomvm::Msgf()` は 4096 byte buffer に `vsprintf` しており overflow 可能
 - 実機確認でも PCM16 の日本語名が文字化けした
-- `MUCOM88UTF8` の有無で MML の multibyte 走査と MUB tag flag が変わるが、ビルドごとの
-  入出力契約が文書化されていない
+- `src/mucom88config.h` は非 Windows build で `MUCOM88UTF8` を自動定義する。このため
+  macOS の MML/tag は UTF-8 扱いになるが、Z80 由来メッセージと legacy PCM/voice name は
+  Shift_JIS のままであり、どの境界で変換するかが文書化されていない
 
 推奨方針は、CLI/API/path/tag の外部表現を UTF-8 に統一し、Z80 コンパイラへ渡す必要が
 ある byte 列と legacy data 表示だけを境界で CP932/Shift_JIS 変換することである。macOS の
@@ -227,8 +228,7 @@ system iconv は調査環境で `SHIFT_JIS` と `CP932` alias を提供し、現
 
 新しい root CMake 構成を推奨する。
 
-- `mucom88_core`: Z80、fmgen、CMucom、VM、format writer、plugin 共通構造
-- `mucom88_os_sdl`: SDL2 OS implementation
+- `mucom88_runtime`: Z80、fmgen、CMucom、VM、format writer、SDL2 OS implementation
 - `mucom88`: CLI
 - `miniplay`: 必要なら簡易プレイヤー
 - `pcmtool`: PCM list/WAV → ADPCM bank
@@ -378,3 +378,331 @@ underrun count と sanitizer test に既知の data race がない。
 従って「コアは arm64 で動く見込みが高い」ことまでは実証済みだが、「互換な macOS 製品が
 完成している」とはまだ言えない。最初の変更セットは Phase A に限定し、golden test で
 Windows 互換性を固定してから realtime/GUI へ進むのが最も安全である。
+
+## 11. macOS CLI 初期移植の具体案
+
+この節は、GUI 等を含めない最初の実装作業の仕様と変更境界を確定するための検討結果である。
+現段階では設計のみであり、この文書以外の source/build file は変更していない。
+
+### 11.1 初期成果物と対応範囲
+
+初期成果物は terminal から実行する単一の `mucom88` executable とする。`.app`、GUI editor、
+Finder の document association、Quick Look 等は含めない。
+
+| 利用形態 | 初期CLIでの扱い | 備考 |
+|---|---|---|
+| `.muc` → `.mub` compile | 必須 | `-g`、`-c`、拡張子自動判定を整理して維持 |
+| `.muc`/`.mub` → WAV | 必須 | `-x -w` の offline step rendering |
+| `.muc`/`.mub` → VGM/S98 | 必須 | `-x -b`、拡張子で writer を選択する現仕様を維持 |
+| `.muc`/`.mub` realtime再生 | 必須 | SDL2、Ctrl-C/SIGTERMで正常停止 |
+| tag情報表示 | 必須 | `-i`、音声deviceを初期化しない |
+| driver 1.5 / 1.7 / EM | 必須 | 組み込み済みbinaryを利用 |
+| `mucomDotNET` driver | 非対応 | macOS binary/sourceがこのrepositoryにない |
+| DLL plugin (`-a`) | 非対応 | option指定時は成功扱いにせず、明確にエラー |
+| SCCI2 real chip (`-s`) | 非対応 | Windows DLL/ABI依存。明確にエラー |
+| 外部ROM (`-e`) | 条件付き維持 | legacy用途。必要fileと探索場所を明示する |
+| rhythm WAV (`-r`) | 維持 | `chdir`依存を解消してdirectory pathを渡す |
+| `miniplay` | 初期成果物から除外 | CLI本体と機能重複し、独自audio実装にも不具合がある |
+| `pcmtool` | 次の変更単位 | CLI本体のacceptanceを阻害しないよう分離 |
+
+ここで「必須」は初期リリース前の完成条件を意味する。最初の小さなpull requestでは build と
+offline compile/render だけを成立させ、その後 realtime を追加してよい。
+
+### 11.2 CLI modeを先に正規化する
+
+現 `main.cpp` はoption解析中の `cmpopt` を、そのまま `CMucom::Init()` の runtime optionにも
+渡す場合がある。しかし二つの名前空間は別物で、値が衝突している。
+
+| bit | compile option側 | VM/runtime option側 |
+|---:|---|---|
+| 1 | `MUCOM_CMPOPT_USE_EXTROM` | `MUCOM_OPTION_FMMUTE` |
+| 2 | `MUCOM_CMPOPT_COMPILE` | `MUCOM_OPTION_SCCI` |
+| 8 | `MUCOM_CMPOPT_STEP` | `MUCOM_OPTION_STEP` |
+
+例えば明示的な `-c -x` は `cmpopt == 10` を `Init()` へ渡すため、SDL実装では無処理とはいえ
+SCCI bitまで立つ。`-e -x` はFM mute bitも立つ。また `.muc` 拡張子によるcompile判定は
+`Init()` より後なので、同じcompileでも指定方法により初期化optionが変わる。
+
+実装時は、argumentを一度 `CliOptions` のような構造へ全てparseしてから、次の独立値を生成する。
+
+- `compile_options`: external ROM、compile、info等のCMucom compile制御
+- `vm_options`: step、FM mute等の実行制御。macOS初期版ではSCCIを入れない
+- `operation`: `Info` / `CompileOnly` / `OfflineRender` / `RealtimePlay`
+- input/output/data/rhythm path
+
+推奨mode決定規則は以下である。
+
+1. `-i` は `Info`。他の出力・再生optionとの併用を拒否
+2. `-g` は `CompileOnly`。入力は `.muc` または明示的 `-c` が必要
+3. `-x` は `OfflineRender`。`VM_OPTION_STEP` を設定し、音声device/timerは作らない
+4. 上記以外は `RealtimePlay`
+5. `.muc` のcase-insensitive拡張子判定はparse完了後、初期化前に行う
+6. `-w`/`-b`を指定して`-x`がない場合は、曖昧なrealtime録音にせずusage errorにする
+7. `-l` は正の整数かつoffline時だけ許可し、上限を設定する
+
+`CompileOnly` と `Info` もaudio不要である。現在の `-g` は通常の `mucom.Init()` を先に呼ぶため
+audio/timerを開いてからcompileし、`-i`も同様である。これらはstep/no-audio初期化へ統一する。
+
+### 11.3 option parserと終了code
+
+初期移植で独自CLI frameworkを導入する必要はない。manual parserを維持する場合でも以下を満たす。
+
+- value必須option (`-p`, `-v`, `-o`, `-w`, `-b`, `-a`, `-f`, `-l`, `-r`) は次の引数が
+  存在し、optionではないことを確認してから読む
+- `strcpy(fname, argv[b])` を廃止し、所有権の明確な `std::string` を使う
+- 入力fileは1個だけ許可し、複数指定を最後の1個で黙って上書きしない
+- unknown option、未対応の `-a`/`-s`、矛盾した組合せを明示する
+- `-h`は成功終了、引数なしはhelpを表示した上でusage errorにする
+- diagnosticはstderr、通常の情報または生成結果はstdoutへ分離する
+
+初期CLIのexit codeは `0 = success`、`1 = compile/load/render/runtime error`、
+`2 = usage/unsupported option` に固定する。現状のhelp/引数不足は `return -1` のためshellから
+255に見え、automationに不向きである。
+
+usageに最低限、次の実例を載せる。
+
+```text
+mucom88 -g -o song.mub song.muc
+mucom88 -x -l 120 -w song.wav song.muc
+mucom88 -x -l 120 -b song.vgm song.mub
+mucom88 song.mub
+mucom88 -i song.muc
+```
+
+### 11.4 初期CMake構成
+
+最初の実装では `src/CMakeLists.txt` を唯一の正規build定義として更新し、実行方法を
+`cmake -S src -B build` に揃える。旧Xcode projectを修理しない。Xcodeが必要な開発者は
+`-G Xcode` で生成する。
+
+採用案は次の通り。
+
+- minimum CMake: 3.20
+- language: C11およびC++17、compiler extensionは原則off
+- dependency: `find_package(SDL2 CONFIG REQUIRED)` と `find_package(Iconv REQUIRED)`
+- link: `SDL2::SDL2` と `Iconv::Iconv`。main wrapper targetが提供される環境だけ
+  `SDL2::SDL2main`を条件付きで扱うが、macOS独自の旧`SDLMain.m`は使わない
+- 初期段階ではsourceを`mucom88_runtime` static libraryと`mucom88` executableへ分離
+- macOSで`MUCOM88WIN`を定義しない。`mucomvm.cpp`をcompileするruntime targetに
+  `USE_SDL=1`を定義
+- `codeconv_iconv.cpp`を選択し、dummyと同時にlinkしない
+- warningは当初`-Wall -Wextra -Wpedantic`を可視化するが、既存warningを全て即時
+  `-Werror`にはしない
+- install先は最初はexecutableのみ。data配置規則が確定した変更でinstall ruleを追加
+
+開発者向けnative buildはarchitectureを指定せずhost nativeとする。release/CIでは以下を分ける。
+
+```text
+# Apple Silicon native
+cmake -S src -B build-arm64 -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+
+# Universal Binary
+cmake -S src -B build-universal -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+```
+
+deployment target 11.0はApple Siliconを含む最小の初期案であり、製品としてどこまで古いmacOSを
+支援するかにより最終決定する。Universal buildではSDL2 dependency自体も両architectureを
+含む必要がある。arm64だけのHomebrew SDL2をlinkしてUniversal化することはできない。
+
+既存Makefileは同じ変更内で無理に全面改修しない。CMakeでacceptanceが通った後、削除するか、
+SDL2/pkg-config対応の薄い互換入口として維持するかを決める。二つのsource listを手管理し続けない。
+
+### 11.5 CMake targetへ含めるsource
+
+`mucom88_runtime`へ含める範囲は以下である。
+
+```text
+membuf.cpp adpcm.cpp md5.c soundbuf.cpp cmucom.cpp mucomvm.cpp
+mucomerror.cpp callback.cpp osdep.cpp plugin/plugin.cpp
+Z80/Z80.cpp
+fmgen/file.cpp fmgen/fmgen.cpp fmgen/fmtimer.cpp
+fmgen/opm.cpp fmgen/opna.cpp fmgen/psg.cpp
+utils/vgmwrite.cpp utils/s98write.cpp utils/wavwrite.cpp
+utils/codeconv/codeconv_iconv.cpp
+sdl/osdep_sdl.cpp sdl/audiobuffer.cpp sdl/audiotime.cpp
+```
+
+`mucom88` executableは`main.cpp`だけをcompileし、`mucom88_runtime`へlinkする。現在の
+`mucomvm_os.h`は`mucomvm.cpp`のcompile時に`USE_SDL`を見て`OSDEP_CLASS`を決めるため、SDL source
+だけへdefinitionを付けても動かない。runtime target全体にprivate definitionとして付与する。
+この構成は最小移植用であり、将来backendをruntime injectionする場合はportable coreと
+platform backendを循環依存なしに分離する変更を別途行う。
+
+次は初期targetへ含めない。
+
+- `src/win32/**`、`src/lib/**`
+- `src/dummy/**`（別のheadless test targetを作る時に修正して利用）
+- `src/sdl/miniplay.cpp`、`src/sdl/audiosdl.cpp`
+- `src/module/**`（library APIのtestを追加する段階で分離）
+- `src/utils/pcmtool*`、`pcmentry*`
+
+### 11.6 SDL2 backendの具体設計
+
+CLI本体が使うのは `OsDependentSdl` であり、`AudioSdl` は`miniplay`専用である。初期移植では
+重複する二つを同時に直さず、`OsDependentSdl`だけを対象にする。
+
+`OsDependentSdl`には次のstateを持たせる。
+
+- `SDL_AudioDeviceID device_id`（0なら未open）
+- `SDL_TimerID timer_id`（0なら未登録）
+- subsystemの初期化状態
+- shutdown中であることを示すatomic flag
+- Ctrl-C/SIGTERM用の`volatile sig_atomic_t`相当のbreak flag
+- thread-safeなaudio queue/ring buffer
+
+初期化・解放順を固定する。
+
+1. realtime modeの時だけ `SDL_InitSubSystem(SDL_INIT_AUDIO | SDL_INIT_TIMER)`
+2. desired specをzero初期化して `SDL_OpenAudioDevice`
+3. obtained specのfrequency、format、channelを確認
+4. callback/userdataを完全に設定してからtimerを追加
+5. bufferをprefillしてからdeviceをunpause
+6. 終了時はshutdown flag → timer削除 → audio device lock/close → buffer破棄
+7. 自分が初期化したsubsystemだけ `SDL_QuitSubSystem` で解放
+
+初期版はformat conversionを増やさず、obtained specが44.1 kHz、`AUDIO_S16SYS`、stereoでない場合は
+理由付きで失敗させる方が挙動を固定しやすい。後で`SDL_AudioStream`を使う変更を独立して行える。
+
+ring bufferは producer（timer）一つ、consumer（audio callback）一つである。最小の安全案は
+SDL mutexでindex/countを保護することだが、audio callback内で長く待たないようcopy対象範囲だけを
+短時間lockする。より厳密にはread/write indexをatomic化したSPSC bufferへ置換する。
+現在の公開`WriteCount`等を複数threadが直接更新する状態は残さない。
+
+`SetBreakHook()`はsignal handlerを登録し、handler内ではflag更新以外を行わない。
+`PlayLoop()`側が20 msごとにflagを確認して抜け、通常のdestructor経路でtimer/device/FMを止める。
+曲の自然終了は現在の`playflag`だけでは判定できないため、初期仕様は「Ctrl-Cまで再生」を維持し、
+自動終了は別途driver statusの定義後に追加する。
+
+### 11.7 offline modeをaudio deviceから分離する
+
+`-g`、`-i`、`-x`はheadless環境でも動くことを完了条件にする。二つの実装案を比較すると、初期CLI
+では案Aを推奨する。
+
+- 案A: `OsDependentSdl`のconstructorではSDLを初期化せず、`InitAudio`/`InitTimer`でlazy init。
+  step modeではこれらが呼ばれないためdevice不要。変更が小さい
+- 案B: `OsDependentDummy`を修正し、modeごとにbackendを注入。長期設計は明快だが、現行
+  `OSDEP_CLASS` macroと`CMucom` constructor/APIの変更範囲が広がる
+
+案Aでもoffline renderingは`CMucom::RenderAudio()`が時刻を進め、fmgenのsampleを生成するため
+機能する。今回もこの経路で1秒のWAV/VGMを生成できた。
+
+### 11.8 file/resource path規則
+
+初期CLIではprocess-global `chdir`を通常処理から排除する。path解決規則を次で固定する。
+
+1. `-p`/`-v`/`-r`で明示されたpath
+2. MML tagの`#pcm`/`#voice`はMML fileがあるdirectoryからの相対path
+3. tagがない場合のdefault dataは入力file directory
+4. 互換用fallbackとして起動時current directory
+5. 将来installする場合のみcompile-time data directory（例: `share/mucom88`）
+
+絶対pathはそのまま使い、正規化には`std::filesystem::path`を用いる。`-r`はseparatorを末尾に
+要求せず、OPNAへdirectoryを明示する。現在はOPNA初期化前に`rhythmdir`へ`chdir`し、その後
+復元するため、失敗時の復元、並行利用、相対input pathが不安定である。
+
+日本語file nameはmacOS側ではUTF-8 byte列として`fopen`へ渡す。Z80/Shift_JISメッセージ変換と
+filesystem pathを同じconverterへ通さない。Unicode normalization（NFC/NFD）が異なるfile名は
+macOS test fixtureを一つ用意して確認する。
+
+### 11.9 入力検証とエラー伝播
+
+CLIは外部fileを直接扱うため、単にmacOSでlinkできるだけでなく、最初の配布前に以下を直す。
+
+- `mucomvm::LoadAlloc`: 0 byte fileでも`fclose`し、`fseek`/`ftell`/`fread`失敗と`INT_MAX`超過を検査
+- `mucomvm::LoadPcm`: 現在はfileがなくても常に0を返す。load結果を`CMucom::LoadPCM`へ返す
+- `LoadPcmFromMem`: 最低0x400 byte、table entry範囲、ADPCM RAM上限を検査してからcopy
+- `LoadFMVoice`: 読み込んだsizeが`MUCOM_FMVOICE_SIZE`未満なら固定長`memcpy`しない
+- `LoadMusic`/`MUBGet*`: buffer sizeを渡し、header、offset、size、加算overflow、埋込PCM範囲を検査
+- `SaveToFile`/writer: short write、`fclose`、header update失敗を上位へ返す
+- WAV/ADPCM: P0-1記載の固定幅little-endian readerへ置換
+- `WavWriter::WriteHeader`: RIFF chunk sizeは現在`PCM byte数 + 44`だが、仕様上はfile sizeから
+  8 byteを引いた`PCM byte数 + 36`。header fieldを修正
+- `CMucom::Record`: 16 frame単位で常に加算するため、rate×秒数が16の倍数でなければ末尾を
+  overshootする。最終blockを残frame数に縮める
+- `SetWavFilename`/`SetLogFilename`: writerの`Open()`失敗がCLIへ返らないため、戻り値を伝播
+
+SDL buildでは`mucomvm::AddPlugins()`全体が`#ifndef USE_SDL`で除外され、最後に0を返す。そのため
+現在のmacOS相当buildで`-a`を指定すると「何もしない成功」になる。同様にSCCI系SDL methodも
+stubである。CLI parse時にunsupportedとしてexit 2にし、下層の成功風stubへ到達させない。
+
+### 11.10 文字コードの具体方針
+
+非Windowsでは`MUCOM88UTF8`が自動定義されるため、MMLのUTF-8 multibyte走査とMUB2 tagの
+`MUCOM_FLAG_UTF8TAG`は維持する。一方、Z80 compilerが生成するShift_JIS messageとlegacy
+PCM table nameは表示前にiconvする。
+
+- CMakeでは`USE_ICONV=1`を正しく定義し、`codeconv_iconv.cpp`だけをlink
+- converterはCP932入力→UTF-8出力を基本とし、必要ならstrict Shift_JISとの差をfixtureで確認
+- `iconv_open == (iconv_t)-1`、`E2BIG`、`EILSEQ`、`EINVAL`を処理
+- 変換不能byteは方針を決めてreplacement表示し、compile data自体は変更しない
+- `vsprintf`を`vsnprintf`へ変更し、変換前後のbuffer終端を保証
+- PCM nameの今回の文字化けをregression testにする
+
+`src/Makefile`の`-DDUSE_ICONV` typoはCMake移行で迂回するだけでなく、Makefileを残す判断をした時点で
+修正する。二つのbuild方式で文字コード挙動が変わる状態を許容しない。
+
+### 11.11 実装変更単位
+
+レビューと互換性確認をしやすくするため、以下の順で分割する。
+
+1. **CLI-1: build + LP64** — `src/CMakeLists.txt`、`adpcm.h/.cpp`、codeconv source選択。
+   arm64でcompile/linkし、`-x`のsample生成を確認
+2. **CLI-2: parser/mode** — `main.cpp`。compile/runtime optionを分離し、headless `-g/-i/-x`、
+   exit code、unsupported optionを確定
+3. **CLI-3: input safety** — `mucomvm.cpp`、`cmucom.h/.cpp`、format reader。
+   PCM/voice/MUB/WAVのsize・offset・I/O errorを伝播
+4. **CLI-4: SDL2 realtime** — `sdl/osdep_sdl.h/.cpp`、`sdl/audiobuffer.h/.cpp`、必要なら
+   `audiotime.*`。device API、同期、signal、shutdownを実装
+5. **CLI-5: path/data** — `main.cpp`、`cmucom.*`、`fmgen/opna.*`。`chdir`を除去しpath規則を実装
+6. **CLI-6: test/install/doc** — CTest、fixture/golden、README、install/package/license notice
+
+各変更単位でWindows buildを壊していないことも確認する。固定幅file parserやpath resolverは
+共通化し、`#ifdef __APPLE__`をportable coreへ散在させない。
+
+### 11.12 CLI acceptance matrix
+
+今回、一時的なSDL2 build（source未変更、`DWORD_PTR=uintptr_t`をcompiler optionで回避）で得た
+baselineは次の通りである。これは正式goldenではなく、修正後の意図しない差を見つける比較材料とする。
+
+| 入力/操作 | 結果 |
+|---|---|
+| `package/sampl1.muc`をcompile | MUB 65,647 byte、成功 |
+| 同曲を1秒offline WAV出力 | RIFF PCM、44,100 Hz、16 bit、stereo、176,492 byte。ただし12 frame超過し、RIFF size fieldも8 byte過大 |
+| 同曲を1秒VGM出力 | VGM 1.70、YM2608、2,396 byte |
+| PCM table message | PCM16の日本語名が文字化け（既知の失敗baseline） |
+
+修正後は最低限、次のmatrixをCIまたは実機testで満たす。
+
+| case | 期待結果 |
+|---|---|
+| clean arm64 configure/build | warningを記録し、link成功 |
+| x86_64またはUniversal build | architecture整合を`file`/`lipo -info`で確認 |
+| `-h` | help、exit 0 |
+| 引数なし | helpとusage diagnostic、exit 2 |
+| value不足、unknown option、複数input | diagnostic、exit 2、生成物なし |
+| `-a`、`-s` | unsupported diagnostic、exit 2 |
+| `-g` sample 1～3 | audio deviceなしでMUB生成、exit 0 |
+| `-i` MUC | audio deviceなしでUTF-8 tag表示、exit 0 |
+| `-x -w/-b` | 指定秒数ちょうど、header/length/hash検証、exit 0。1秒stereo 16 bit WAVは44 byte header込み176,444 byte |
+| realtime MUB | SDL2再生、Ctrl-C後exit 0、hang/crashなし |
+| 存在しないMUC/MUB/PCM/voice | 適切なerror、exit 1 |
+| truncate/不正MUB、短いPCM/voice、壊れたWAV | OOBなし、error、exit 1 |
+| 日本語tag/name/path | UTF-8表示とfile open成功 |
+| ASan/UBSan | sample compile/renderでerrorなし |
+| TSanまたは同等検査 | realtime bufferのdata raceなし |
+
+### 11.13 CLI初期移植で保留する判断
+
+実装を開始する前に製品要件として最終確認が必要なのは以下だけである。技術調査上のblockerではなく、
+上記推奨値で着手可能である。
+
+- 最低対応macOSを11.0とするか、より新しくするか
+- releaseをUniversal単一binaryにするか、arm64/x86_64別配布にするか
+- dependencyをHomebrew前提にするか、SDL2を配布物へ同梱するか
+- realtime再生をCtrl-Cまでとするか、非loop曲の自然終了検出も初期要件に含めるか
+- default PCM/voice dataをinstall対象へ含めるか、利用者が明示指定する方式にするか
+
+推奨defaultは「macOS 11.0、Universal release、開発時Homebrew・配布時SDL2同梱、初期はCtrl-C停止、
+`mucompcm.bin`と`voice.dat`をlicense/attribution付きでdata directoryへ配置」である。
