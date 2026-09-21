@@ -1,10 +1,11 @@
-// audiosdl.cpp 
-// BouKiCHi 2019
-// SDL使用
+// SDL2 audio backend used by miniplay.
 
-#include <SDL.h>
-#include <string.h>
 #include "audiosdl.h"
+
+#include <algorithm>
+#include <cstdio>
+#include <cstring>
+#include <mutex>
 
 #define PULSE_MAX 100
 #define PULSE_VALUE 10000
@@ -19,82 +20,149 @@
 static void SdlAudioCallback(void *param, Uint8 *data, int len);
 static Uint32 SdlTimerCallback(Uint32 interval, void *param);
 
-AudioSdl::AudioSdl() {
-    Time = new AudioTimeInfo();
-    Buffer = new AudioBuffer(AUDIO_CHANNELS, AUDIO_BUFFER_SIZE, AUDIO_BUFFER_BLOCK);
-    UserAudioCallback = new AudioCallback;
-    AudioOpenFlag = false;
+AudioSdl::AudioSdl()
+    : Buffer(new AudioBuffer(AUDIO_CHANNELS, AUDIO_BUFFER_SIZE, AUDIO_BUFFER_BLOCK)),
+      Time(new AudioTimeInfo()),
+      AudioOpenFlag(false),
+      UserAudioCallback(new AudioCallback),
+      AudioDevice(0),
+      TimerId(0),
+      InitializedSubsystems(0),
+      ShuttingDown(true)
+{
 }
 
-AudioSdl::~AudioSdl() {
+AudioSdl::~AudioSdl()
+{
+    Close();
     delete Buffer;
     delete Time;
     delete UserAudioCallback;
 }
 
-// オーディオ開始
-bool AudioSdl::Open(int rate) {
-    Buffer->Reset();
+bool AudioSdl::InitSubsystem(Uint32 flags)
+{
+    const Uint32 active = SDL_WasInit(flags);
+    const Uint32 missing = flags & ~active;
+    if (missing == 0) return true;
+    if (SDL_InitSubSystem(missing) != 0) {
+        std::fprintf(stderr, "SDL initialization failed: %s\n", SDL_GetError());
+        return false;
+    }
+    InitializedSubsystems |= missing;
+    return true;
+}
 
-    if (SDL_Init(SDL_INIT_AUDIO | SDL_INIT_TIMER)) {
-        printf("Failed to Initialize!!\n");
+void AudioSdl::QuitSubsystems()
+{
+    if (InitializedSubsystems == 0) return;
+    SDL_QuitSubSystem(InitializedSubsystems);
+    InitializedSubsystems = 0;
+}
+
+// オーディオ開始
+bool AudioSdl::Open(int rate)
+{
+    if (AudioOpenFlag) return true;
+    if (!InitSubsystem(SDL_INIT_AUDIO)) return false;
+    if (!InitSubsystem(SDL_INIT_TIMER)) {
+        QuitSubsystems();
         return false;
     }
 
-    SDL_AudioSpec af;
-    af.freq     = rate;
-    af.format   = AUDIO_S16;
-    af.channels = AUDIO_CHANNELS;
-    af.samples  = AUDIO_BUFFER_BLOCK / 2;
-    af.callback = SdlAudioCallback;
-    af.userdata = this;
-
-    // 1msあたりのサンプル数
+    Buffer->Reset();
     Buffer->SetRate(rate);
 
-    if (SDL_OpenAudio(&af, NULL) < 0) {
-        printf("Audio Error!!\n");
+    SDL_AudioSpec desired{};
+    SDL_AudioSpec obtained{};
+    desired.freq = rate;
+    desired.format = AUDIO_S16SYS;
+    desired.channels = AUDIO_CHANNELS;
+    desired.samples = AUDIO_BUFFER_BLOCK / AUDIO_CHANNELS;
+    desired.callback = SdlAudioCallback;
+    desired.userdata = this;
+
+    AudioDevice = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, 0);
+    if (AudioDevice == 0) {
+        std::fprintf(stderr, "SDL audio device open failed: %s\n", SDL_GetError());
+        QuitSubsystems();
+        return false;
+    }
+    if (obtained.freq != desired.freq || obtained.format != desired.format ||
+        obtained.channels != desired.channels) {
+        std::fprintf(stderr,
+            "Unsupported SDL audio format: %d Hz, format 0x%x, %u channels\n",
+            obtained.freq, obtained.format, obtained.channels);
+        SDL_CloseAudioDevice(AudioDevice);
+        AudioDevice = 0;
+        QuitSubsystems();
+        return false;
+    }
+
+    ShuttingDown.store(false, std::memory_order_release);
+    if (!InitAudioTimer()) {
+        ShuttingDown.store(true, std::memory_order_release);
+        SDL_CloseAudioDevice(AudioDevice);
+        AudioDevice = 0;
+        QuitSubsystems();
         return false;
     }
 
     AudioOpenFlag = true;
-    InitAudioTimer();
-
-    SDL_PauseAudio(0);
+    SDL_PauseAudioDevice(AudioDevice, 0);
     return true;
 }
 
-void AudioSdl::Close() {
-    if (AudioOpenFlag) SDL_CloseAudio();
-    SDL_Quit();
+void AudioSdl::Close()
+{
+    ShuttingDown.store(true, std::memory_order_release);
+    if (TimerId != 0) {
+        SDL_RemoveTimer(TimerId);
+        TimerId = 0;
+    }
+    {
+        // Wait for a timer callback that was already running when it was removed.
+        std::lock_guard<std::mutex> lock(TimerCallbackMutex);
+    }
+    if (AudioDevice != 0) {
+        SDL_PauseAudioDevice(AudioDevice, 1);
+        SDL_CloseAudioDevice(AudioDevice);
+        AudioDevice = 0;
+    }
     AudioOpenFlag = false;
+    QuitSubsystems();
 }
 
-
 // タイマー初期化
-void AudioSdl::InitAudioTimer() {
+bool AudioSdl::InitAudioTimer()
+{
     Time->ResetTick();
-
-    SDL_AddTimer(TIMER_INTERVAL, SdlTimerCallback, this);
+    TimerId = SDL_AddTimer(TIMER_INTERVAL, SdlTimerCallback, this);
+    if (TimerId == 0) {
+        std::fprintf(stderr, "SDL audio timer creation failed: %s\n", SDL_GetError());
+        return false;
+    }
+    return true;
 }
 
 // タイマー
 static Uint32 SdlTimerCallback(Uint32 interval, void *param) {
-    AudioSdl *inst = (AudioSdl*)param;
-    inst->UpdateAudioTimer();
-    return(interval);
+    AudioSdl *inst = static_cast<AudioSdl *>(param);
+    return inst->UpdateAudioTimer() ? interval : 0;
 }
 
-
 // オーディオ更新
-void AudioSdl::UpdateAudioTimer() {
+bool AudioSdl::UpdateAudioTimer()
+{
+    std::lock_guard<std::mutex> callbackLock(TimerCallbackMutex);
+    if (ShuttingDown.load(std::memory_order_acquire)) return false;
 
     int s = Buffer->GetLeft();
 
     //　バッファ送出を開始
     if (s == 0) {
         Buffer->StartSending();
-        return;
+        return true;
     }
 
     int UpdateTick = Time->GetUpdateTick();
@@ -105,10 +173,13 @@ void AudioSdl::UpdateAudioTimer() {
     s &= ~1;
 
     UpdateSamples(s);
+    return !ShuttingDown.load(std::memory_order_acquire);
 }
 
 // オーディオデータ作成後に更新
 void AudioSdl::UpdateSamples(int Samples) {
+    if (Samples <= 0 || ShuttingDown.load(std::memory_order_acquire)) return;
+
     // short型です
     short buf[AUDIO_BUFFER_BLOCK];
 
@@ -122,11 +193,16 @@ void AudioSdl::UpdateSamples(int Samples) {
 
 // オーディオコールバック
 static void SdlAudioCallback(void *param, Uint8 *data, int len) {
-    AudioSdl *inst = (AudioSdl *)param;
-    inst->AudioMain((short *)data, len / 4);
+    AudioSdl *inst = static_cast<AudioSdl *>(param);
+    const int bytesPerFrame = static_cast<int>(sizeof(short)) * AUDIO_CHANNELS;
+    inst->AudioMain(reinterpret_cast<short *>(data), len / bytesPerFrame);
 }
 
 // オーディオ処理メイン
 void AudioSdl::AudioMain(short *buffer, int frames) {
+    if (ShuttingDown.load(std::memory_order_acquire)) {
+        std::memset(buffer, 0, sizeof(short) * frames * AUDIO_CHANNELS);
+        return;
+    }
     Buffer->Read(buffer, frames);
 }

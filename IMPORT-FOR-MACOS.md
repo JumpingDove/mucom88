@@ -875,3 +875,66 @@ lipo -info build-universal/mucom88
 通常installが片方のarchitectureしか提供しない場合、Universal linkは失敗する。Universal Binary、
 最低対応macOSの`CMAKE_OSX_DEPLOYMENT_TARGET`、SDL2同梱、codesign、notarizationは未検証であり、
 release配布前に別途確認する。
+
+## 14. miniplay音声処理のSDL2 device API移行
+
+2026-09-21に、通常CLIとは別系統である`make mini`用の`AudioSdl`をSDL2 device APIへ移行した。
+対象fileは`src/sdl/audiosdl.h`、`src/sdl/audiosdl.cpp`、呼び出し元の
+`src/sdl/miniplay.cpp`である。通常CLIが使用する`OsDependentSdl`の実装は変更していない。
+
+### 14.1 実装内容
+
+- process-globalな`SDL_OpenAudio`を`SDL_OpenAudioDevice`へ置換し、返された
+  `SDL_AudioDeviceID`を`AudioSdl`が保持
+- `SDL_PauseAudio`と`SDL_CloseAudio`を、それぞれ`SDL_PauseAudioDevice`と
+  `SDL_CloseAudioDevice`へ置換
+- desired/obtainedの`SDL_AudioSpec`をzero初期化し、44.1 kHz、`AUDIO_S16SYS`、stereoという
+  `MucomModule::Mix()`の前提を検査。不一致の場合は自動変換せず理由付きで失敗
+- audio callbackのframe数を、16 bit stereoのbytes per frameから算出
+- `SDL_AddTimer`の戻り値を`SDL_TimerID`として保持し、登録失敗を`Open()`の失敗として伝播
+- audioおよびtimer subsystemのうち`AudioSdl`自身が初期化したものだけを記録し、
+  process全体への`SDL_Quit()`を廃止して`SDL_QuitSubSystem()`で対称的に解放
+- atomicなshutdown flagを追加し、終了開始後のtimer producerとaudio callbackによる処理を抑止
+- timer callback専用mutexを追加し、timer削除時点ですでに実行中だったcallbackの完了を待機
+- 終了順序を「shutdown設定 → timer削除 → 実行中timer callback完了待ち → device pause/close
+  → subsystem解放」に固定
+- `AudioSdl` destructorからも`Close()`を呼び、複数回の`Close()`を安全なno-opとして処理
+- `miniplay`でmodule/audio初期化失敗をexit 1へ伝播し、pointerをnull初期化して部分初期化時も安全に解放
+- SIGINT/SIGTERM handlerでは`sig_atomic_t` flagだけを更新し、event loopから通常のdestructor経路で終了
+
+移行後、`src`以下の実行codeには`SDL_OpenAudio`、`SDL_PauseAudio`、`SDL_CloseAudio`の旧API呼び出しは
+残っていない。CLIとminiplayの両方がdevice IDを持つSDL2 APIを使用する。
+
+### 14.2 検証結果
+
+Apple Silicon/macOS 26.6.2、Apple clang 21、Homebrew SDL2/iconvの環境で次を確認した。
+
+| case | 結果 |
+|---|---|
+| `make mini` | arm64 executableのcompile/link成功、warningなし |
+| SDL dummy driver | sampleのcompileと再生開始に成功 |
+| SIGINT | Ctrl-C後exit 0、hangなし |
+| 存在しないSDL audio driver | diagnosticを出しexit 1、hangなし |
+| 旧audio API検索 | `src`以下で呼び出し0件 |
+| 通常CLI回帰 | arm64のcompile/link成功、`-h`がexit 0 |
+| ASan/UBSan build | compile/link成功、warningなし |
+
+ASan/UBSan版の実行は、main到達前のmacOS LaunchServices/XPC errorにより完了していない。またmacOSの
+当該AddressSanitizer runtimeではLeakSanitizerの`detect_leaks`が非対応だった。このため、sanitizerの
+実行結果を移行完了の根拠には含めず、通常buildのSDL dummy driver試験を現時点のruntime確認とする。
+TSanによるtimer/audio callback間のdata race検査も未実施であり、CI整備時の残課題である。
+
+### 14.3 利用方法と注意点
+
+miniplayはCMake targetにはまだ含まれていないため、`src` directoryでMakefileからbuildする。
+
+```sh
+cd src
+make mini
+./miniplay ../package/sampl1.muc
+```
+
+終了はCtrl-Cで行う。現行`MucomModule::Open()`はprocess-globalなcurrent directoryを使用し、compile時に
+current directoryへ`mucom88.mub`を生成する。既存の同名fileを上書きする可能性があるため、試験時は
+専用の一時directoryをcurrent directoryとして実行すること。出力pathの明示化と`chdir`の排除は、
+miniplay/module系統に残る別の移植課題である。

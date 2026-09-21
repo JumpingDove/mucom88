@@ -26,3 +26,4 @@ src/Debug
 
 build/
 build-debug/
+**/*.mub

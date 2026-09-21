@@ -1,7 +1,19 @@
 #include <stdio.h>
 #include <SDL.h>
+#include <csignal>
 #include "audiosdl.h"
 #include "mucom_module.h"
+
+namespace {
+
+volatile std::sig_atomic_t BreakRequested = 0;
+
+void SignalHandler(int)
+{
+    BreakRequested = 1;
+}
+
+} // namespace
 
 class Player {
 public:
@@ -18,13 +30,16 @@ private:
     bool EventCheck();
 };
 
-Player::Player() {
+Player::Player() : sdl(NULL), module(NULL) {
 }
 
 Player::~Player() {
+    Stop();
 }
 
 bool Player::EventCheck() {
+    if (BreakRequested != 0) return true;
+
     SDL_Event evt;
 
     while(SDL_PollEvent(&evt)) {
@@ -51,6 +66,7 @@ void Player::AudioCallback(void *mix, int size) {
 }
 
 int Player::Play(const char *filename) {
+    Stop();
     sdl = new AudioSdl();
     sdl->UserAudioCallback->Set(this,RunAudioCallback);
     module = new MucomModule();
@@ -62,7 +78,7 @@ int Player::Play(const char *filename) {
     r = module->Play();
     if (!r) return -1;
 
-    sdl->Open(44100);
+    if (!sdl->Open(44100)) return -1;
 
     // イベントループ
     printf("Playing..\n");
@@ -74,13 +90,17 @@ int Player::Play(const char *filename) {
 }
 
 void Player::Stop() {
-    sdl->Close();
-    delete sdl;
-    sdl = NULL;
+    if (sdl != NULL) {
+        sdl->Close();
+        delete sdl;
+        sdl = NULL;
+    }
 
-    module->Close();
-    delete module;
-    module = NULL;
+    if (module != NULL) {
+        module->Close();
+        delete module;
+        module = NULL;
+    }
 }
 
 
@@ -94,8 +114,13 @@ int main(int argc,char *argv[]) {
         printf("usage miniplay <song.muc>\n");
         return 0;
     }
-    Player *p = new Player();
-    p->Play(argv[1]);
-    p->Stop();
-    return 0;
+    BreakRequested = 0;
+    if (std::signal(SIGINT, SignalHandler) == SIG_ERR ||
+        std::signal(SIGTERM, SignalHandler) == SIG_ERR) {
+        std::fprintf(stderr, "Failed to install signal handlers.\n");
+        return 1;
+    }
+
+    Player player;
+    return player.Play(argv[1]) == 0 ? 0 : 1;
 }
