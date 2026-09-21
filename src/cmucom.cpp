@@ -2149,6 +2149,9 @@ int CMucom::SaveMusic(const char *fname,int start, int length, int option)
 			if (pcmdata != NULL) {
 				hed.pcmdata = hed.tagdata + footsize;
 				hed.pcmsize = pcmsize;
+			} else {
+				PRINTF("#PCM file not found [%s].\r\n", pcmname);
+				return -3;
 			}
 		}
 	}

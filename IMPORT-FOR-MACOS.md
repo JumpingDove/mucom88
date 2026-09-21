@@ -935,6 +935,39 @@ make mini
 ```
 
 終了はCtrl-Cで行う。現行`MucomModule::Open()`はprocess-globalなcurrent directoryを使用し、compile時に
-current directoryへ`mucom88.mub`を生成する。既存の同名fileを上書きする可能性があるため、試験時は
-専用の一時directoryをcurrent directoryとして実行すること。出力pathの明示化と`chdir`の排除は、
+入力MUCのdirectoryへ`mucom88.mub`を生成する。既存の同名fileを上書きする可能性があるため、試験時は
+MUC、PCM、voice dataを専用の一時directoryへcopyして実行すること。出力pathの明示化と`chdir`の排除は、
 miniplay/module系統に残る別の移植課題である。
+
+### 14.4 miniplayのPCM欠落修正
+
+SDL2 device API移行後、repository rootや`src`から`package/sampl1.muc`を指定するとFM音源は鳴るが
+PCM音声が鳴らない問題を確認した。原因はaudio backendではなく、resource pathとerror伝播にあった。
+
+- `sampl1.muc`は`#pcm mucompcm.bin`と`#voice voice.dat`をMUC相対で指定する
+- 旧`miniplay`は常に`MucomModule::Open(".", filename)`を呼び、起動時current directoryから
+  `mucompcm.bin`を探索していた
+- `MucomModule::Open()`は`CMucom::LoadPCM()`の失敗を無視してcompileを続行していた
+- `CMucom::SaveMusic()`もtag指定PCMを開けない場合に埋め込みを省略し、成功を返していた
+- その結果、`pcmdata=0`、`pcmsize=0`のMUBを生成し、正常再生に見える状態でPCMだけが無音になった
+
+次の修正を実装した。
+
+- `miniplay`で入力pathを絶対pathへ変換し、親directoryとfile nameを分離して`MucomModule::Open()`へ渡す
+- PCMとvoiceの相対pathを入力MUCのdirectory基準で解決
+- 作業directoryへの移動失敗、PCM読み込み失敗、明示voice読み込み失敗を`Open()`の失敗として伝播
+- `CMucom::SaveMusic()`で`#pcm`指定fileを開けない場合はMUBを保存せずcompile errorを返す
+- `MucomModule::mucom`をnull初期化し、部分初期化で失敗した場合も安全に解放
+
+修正後は起動時current directoryに依存せず、入力MUCと同じdirectoryにあるPCM/voiceを読み込む。
+一時directoryへsample一式を配置し、別directoryから絶対pathで起動して次を確認した。
+
+| case | 結果 |
+|---|---|
+| `sampl1.muc`のcompile | PCM 16 entryを読み込み、成功 |
+| 生成MUB | 65,647 byte、`pcmdata=2,007`、`pcmsize=63,640` |
+| SDL dummy driver再生 | 再生開始成功、Ctrl-C後exit 0 |
+| PCMあり/なしMUBの5秒WAV | SHA-256が異なり、PCMあり側だけPCM table読込を確認 |
+| `mucompcm.bin`欠落 | diagnostic、exit 1、MUB生成なし |
+| `-k`でPCM preloadを省略しtag PCMも欠落 | compileがexit 1、MUB生成なし |
+| 通常CLI回帰 | arm64 compile/link成功、warningなし |

@@ -15,6 +15,7 @@ MucomModule::MucomModule() {
   pcmfile = MUCOM_DEFAULT_PCMFILE;
   outfile = DEFAULT_OUTFILE;
   voicefile = NULL;
+  mucom = NULL;
   resultText = NULL;
   volume = 1.0f;
 }
@@ -41,13 +42,25 @@ void MucomModule::SetVolume(double vol) {
 
 
 bool MucomModule::Open(const char *workingDirectory, const char *songFilename) {
-  chdir(workingDirectory);
+  if (workingDirectory == NULL || songFilename == NULL ||
+      chdir(workingDirectory) != 0) {
+    AddResultBuffer("#Unable to enter the song directory.\r\n");
+    return false;
+  }
   mucom = new CMucom();
   int cmpopt = MUCOM_CMPOPT_COMPILE;
   mucom->Init(NULL,cmpopt,audioRate);
   mucom->Reset(cmpopt);
-  if (pcmfile) mucom->LoadPCM(pcmfile);
-  if (voicefile) mucom->LoadFMVoice(voicefile);
+  if (pcmfile && mucom->LoadPCM(pcmfile) != 0) {
+    AddResultBuffer(GetMucomMessage());
+    FreeMucom();
+    return false;
+  }
+  if (voicefile && mucom->LoadFMVoice(voicefile) != 0) {
+    AddResultBuffer(GetMucomMessage());
+    FreeMucom();
+    return false;
+  }
   int cr = mucom->CompileFile(songFilename, outfile);
 
   AddResultBuffer(GetMucomMessage());

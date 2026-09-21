@@ -1,6 +1,9 @@
 #include <stdio.h>
 #include <SDL.h>
 #include <csignal>
+#include <filesystem>
+#include <string>
+#include <system_error>
 #include "audiosdl.h"
 #include "mucom_module.h"
 
@@ -72,7 +75,16 @@ int Player::Play(const char *filename) {
     module = new MucomModule();
 
     printf("File:%s\n", filename);
-    bool r = module->Open(".", filename);
+    std::error_code pathError;
+    const std::filesystem::path input =
+        std::filesystem::absolute(std::filesystem::path(filename), pathError);
+    if (pathError || input.filename().empty()) {
+        std::fprintf(stderr, "Invalid input path: %s\n", filename);
+        return -1;
+    }
+    const std::string inputDirectory = input.parent_path().string();
+    const std::string inputFilename = input.filename().string();
+    bool r = module->Open(inputDirectory.c_str(), inputFilename.c_str());
     puts(module->GetResult());
     if (!r) return -1;
     r = module->Play();
