@@ -23,3 +23,6 @@ src/.vs/
 src/Debug
 
 .vscode/
+
+build/
+build-debug/
