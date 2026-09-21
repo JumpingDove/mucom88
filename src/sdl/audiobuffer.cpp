@@ -13,6 +13,7 @@ AudioBuffer::AudioBuffer(int channels, int bufferSize, int blockSize)
       ReadPosition(0),
       SamplePerTick(0),
       UpdateSamples(0),
+      DroppedSamples(0),
       Channels(channels),
       BufferSize(bufferSize),
       BlockSize(blockSize),
@@ -35,6 +36,7 @@ void AudioBuffer::Reset()
     WriteCount = 0;
     ReadPosition = 0;
     UpdateSamples = 0;
+    DroppedSamples = 0;
     std::memset(AudioData, 0, sizeof(short) * BufferSize);
 }
 
@@ -48,13 +50,18 @@ int AudioBuffer::TickToSamples(int ms)
 {
     std::lock_guard<std::mutex> lock(Mutex);
     UpdateSamples += ms * SamplePerTick * Channels;
+    if (UpdateSamples > BufferSize) {
+        DroppedSamples += static_cast<std::uint64_t>(UpdateSamples - BufferSize);
+        UpdateSamples = BufferSize;
+    }
     return static_cast<int>(UpdateSamples);
 }
 
-void AudioBuffer::ClearTick()
+void AudioBuffer::ConsumeSamples(int samples)
 {
     std::lock_guard<std::mutex> lock(Mutex);
-    UpdateSamples -= static_cast<int>(UpdateSamples);
+    if (samples <= 0) return;
+    UpdateSamples = std::max(0.0, UpdateSamples - samples);
 }
 
 void AudioBuffer::SetRate(int rate)
@@ -101,14 +108,23 @@ void AudioBuffer::Read(short *output, int frames)
         --WriteCount;
         if (ReadPosition >= BufferSize) ReadPosition = 0;
     }
-    if (underflow) ++UnderCount;
+    if (underflow) {
+        ++UnderCount;
+        SendBuffer = false;
+    }
 }
 
-template void AudioBuffer::Write<int *>(int *input, int frames);
-template void AudioBuffer::Write<short *>(short *input, int frames);
+std::uint64_t AudioBuffer::GetDroppedSamples()
+{
+    std::lock_guard<std::mutex> lock(Mutex);
+    return DroppedSamples;
+}
+
+template int AudioBuffer::Write<int *>(int *input, int frames);
+template int AudioBuffer::Write<short *>(short *input, int frames);
 
 template <typename T>
-void AudioBuffer::Write(T input, int frames)
+int AudioBuffer::Write(T input, int frames)
 {
     std::lock_guard<std::mutex> lock(Mutex);
     const int requested = frames * Channels;
@@ -120,4 +136,5 @@ void AudioBuffer::Write(T input, int frames)
         ++WriteCount;
         if (WritePosition >= BufferSize) WritePosition = 0;
     }
+    return samples / Channels;
 }

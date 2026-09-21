@@ -971,3 +971,67 @@ PCM音声が鳴らない問題を確認した。原因はaudio backendではな�
 | `mucompcm.bin`欠落 | diagnostic、exit 1、MUB生成なし |
 | `-k`でPCM preloadを省略しtag PCMも欠落 | compileがexit 1、MUB生成なし |
 | 通常CLI回帰 | arm64 compile/link成功、warningなし |
+
+## 15. SDLリアルタイム再生のプチノイズ対策
+
+2026-09-21に、`build/mucom88`では発生し、同じSDL2を使用する`miniplay`では再現しない
+プチノイズについて、前節までの調査結果に基づく対策を実装した。変更対象は
+`src/sdl/audiobuffer.h`、`src/sdl/audiobuffer.cpp`、`src/sdl/osdep_sdl.h`、
+`src/sdl/osdep_sdl.cpp`、`src/sdl/audiosdl.h`、`src/sdl/audiosdl.cpp`である。
+
+### 15.1 原因と対策方針
+
+CLI側の旧`OsDependentSdl::SendAudio()`には、次のsample欠落経路があった。
+
+- `TickToSamples()`で算出した未生成sampleの一部だけを書いた場合も、`ClearTick()`が未生成分を
+  すべて破棄していた
+- ring bufferが満杯のときは経過時間を加算する前にreturnするため、その時間に相当するsampleを
+  生成しなかった
+- timerの遅延などでring bufferが空になると、audio callbackが残りを0で埋めた。波形途中への0挿入が
+  不連続を作り、クリック状ノイズになる可能性が高かった
+- audio deviceをring bufferの初回充填前から開始しており、起動直後もunderflowし得た
+
+`miniplay`側は`ClearTick()`を呼ばないためCLIよりbuffer残量を維持しやすく、同じ問題が表面化しにくい
+状態だった。CLIとminiplayは同じSDL2 dylibをlinkしていたため、SDL library差は原因から除外した。
+
+対策後は、初回充填およびunderflow後の再充填だけをSDL timerの経過時間からsample数へ変換し、再生開始後は
+audio callbackが実際に消費した空き容量を補充する。これにより、非real-timeなSDL timerの短時間の遅延を
+次回以降の補充で回復でき、device clockとの微小な差を未生成sampleとして際限なく蓄積することも避ける。
+
+### 15.2 実装内容
+
+- `AudioBuffer::Write()`を実際に書けたframe数を返すAPIへ変更
+- `ClearTick()`を廃止し、実際に書けたsample数だけを差し引く`ConsumeSamples()`へ変更。小数sampleと
+  未生成分を保持
+- ring bufferが満杯でも、初回充填中または再充填中は経過時間を先に加算
+- 未生成sampleの異常な増加をbuffer容量で制限し、超過量をdiagnostic用に記録
+- audio deviceをpause状態でopenし、ring bufferがhigh-water markへ達してから再生開始
+- 再生開始後は、callbackが消費してできた空き容量を最大1 blockずつ補充
+- underflowを検出した場合は送出を停止して0を返し、high-water markまで再充填してから送出を再開
+- CLI終了時、値が0でない場合だけunderflow回数と破棄sample数を標準errorへ表示
+- 同じ`AudioBuffer`を使うminiplayにも、初回充填、device-clock基準の補充、underflow後の再充填を適用
+
+ring bufferのhigh-water markは従来の`BufferSize - BlockSize`を維持する。現在の定数ではstereoの
+14,336 sample、44.1 kHz換算で約162.5 msである。出力callbackは1,024 frame（約23.2 ms）単位、producerは
+1回につき最大2,048 sampleを生成する。
+
+### 15.3 検証結果
+
+Apple Silicon/macOS 26.6.2、Apple clang 21、Homebrew SDL2/iconv環境で次を確認した。
+
+| case | 結果 |
+|---|---|
+| CMake `build/mucom88` | compile/link成功。変更箇所以外に既存のunused parameter warningあり |
+| Makefile CLI / `make mini` | `/tmp`の独立object/outputで双方compile/link成功 |
+| `AudioBuffer`単体試験 | 経過時間換算、部分消費、小数残量、書込frame数、underflow停止、上限計数が成功 |
+| `build/mucom88` realtime | SDL dummy driverで10秒継続、Ctrl-C後exit 0 |
+| CLI diagnostic | 10秒試験でunderflow 0、破棄sample 0（非0時だけ出るdiagnosticが出ないことを確認） |
+| `miniplay` realtime | SDL dummy driverで5秒継続、Ctrl-C後exit 0 |
+| offline WAV | 1秒、176,444 byte、exit 0 |
+
+SDL dummy driverではbuffer制御と終了経路を確認できるが、実際のCoreAudio出力におけるクリック音の有無は
+聴感評価できない。次の実機確認では`build/mucom88 package/sampl1.muc`を十分な時間再生し、プチノイズ、
+テンポ、PCMを含む音切れを確認する。終了時に`SDL audio diagnostics`が表示された場合は、その値と発生時刻を
+記録する。なお、対策後もノイズが残る場合の次段階は、SDL timerでの生成を廃止してaudio callbackまたは
+専用producer threadをsample clockの基準にする設計変更、およびcallbackで0埋めへ切り替える境界の
+短いfade処理である。

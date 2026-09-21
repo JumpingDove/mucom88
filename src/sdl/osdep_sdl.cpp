@@ -41,6 +41,7 @@ OsDependentSdl::OsDependentSdl()
     : Buffer(new AudioBuffer(AUDIO_CHANNELS, AUDIO_BUFFER_SIZE, AUDIO_BUFFER_BLOCK)),
       Time(new AudioTimeInfo()),
       AudioOpenFlag(false),
+      AudioDeviceStarted(false),
       AudioDevice(0),
       TimerId(0),
       InitializedSubsystems(0),
@@ -126,43 +127,67 @@ bool OsDependentSdl::InitAudio(void *, int rate, int)
 
     ShuttingDown.store(false, std::memory_order_release);
     AudioOpenFlag = true;
-    SDL_PauseAudioDevice(AudioDevice, 0);
+    AudioDeviceStarted = false;
     return true;
 }
 
 void OsDependentSdl::FreeAudio()
 {
     ShuttingDown.store(true, std::memory_order_release);
+    const int underruns = Buffer->GetUnderCount();
+    const std::uint64_t dropped = Buffer->GetDroppedSamples();
+    if (underruns > 0 || dropped > 0) {
+        std::fprintf(stderr,
+            "SDL audio diagnostics: %d underruns, %llu dropped samples\n",
+            underruns, static_cast<unsigned long long>(dropped));
+    }
     if (AudioDevice != 0) {
-        SDL_PauseAudioDevice(AudioDevice, 1);
+        if (AudioDeviceStarted) SDL_PauseAudioDevice(AudioDevice, 1);
         SDL_CloseAudioDevice(AudioDevice);
         AudioDevice = 0;
     }
     AudioOpenFlag = false;
+    AudioDeviceStarted = false;
     QuitSubsystem(SDL_INIT_AUDIO);
 }
 
 bool OsDependentSdl::SendAudio(int ms)
 {
     if (ShuttingDown.load(std::memory_order_acquire)) return false;
+    const bool sending = Buffer->IsSending();
+    const int pending = sending ? 0 : Buffer->TickToSamples(ms);
     int available = Buffer->GetLeft();
     if (available == 0) {
         Buffer->StartSending();
+        if (!AudioDeviceStarted && AudioDevice != 0) {
+            SDL_PauseAudioDevice(AudioDevice, 0);
+            AudioDeviceStarted = true;
+        }
         return true;
     }
 
-    int samples = std::min(Buffer->TickToSamples(ms), available);
+    // During prefill, preserve the wall-clock/sample relationship. Once the
+    // device is running, replenish what the consumer actually removed so a
+    // short timer delay does not permanently drain the ring buffer.
+    int samples = sending ? available : std::min(pending, available);
     samples = std::min(samples, AUDIO_BUFFER_BLOCK);
     // Stereo samples must form complete frames.
     samples &= ~1;
     if (samples <= 0) return true;
 
-    Buffer->ClearTick();
     int mixed[AUDIO_BUFFER_BLOCK]{};
     UserAudioCallback->mix = mixed;
     UserAudioCallback->size = samples / AUDIO_CHANNELS;
     UserAudioCallback->Run();
-    Buffer->Write(mixed, samples / AUDIO_CHANNELS);
+    const int writtenFrames = Buffer->Write(mixed, samples / AUDIO_CHANNELS);
+    Buffer->ConsumeSamples(writtenFrames * AUDIO_CHANNELS);
+    if (!sending && Buffer->GetLeft() == 0) {
+        Buffer->StartSending();
+        if (!AudioDeviceStarted && AudioDevice != 0) {
+            SDL_PauseAudioDevice(AudioDevice, 0);
+            AudioDeviceStarted = true;
+        }
+    }
     return true;
 }
 

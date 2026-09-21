@@ -36,6 +36,7 @@ private:
     bool InitAudioTimer();
 
     SDL_AudioDeviceID AudioDevice;
+    bool AudioDeviceStarted;
     SDL_TimerID TimerId;
     Uint32 InitializedSubsystems;
     std::atomic<bool> ShuttingDown;

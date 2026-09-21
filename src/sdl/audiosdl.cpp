@@ -26,6 +26,7 @@ AudioSdl::AudioSdl()
       AudioOpenFlag(false),
       UserAudioCallback(new AudioCallback),
       AudioDevice(0),
+      AudioDeviceStarted(false),
       TimerId(0),
       InitializedSubsystems(0),
       ShuttingDown(true)
@@ -109,7 +110,7 @@ bool AudioSdl::Open(int rate)
     }
 
     AudioOpenFlag = true;
-    SDL_PauseAudioDevice(AudioDevice, 0);
+    AudioDeviceStarted = false;
     return true;
 }
 
@@ -125,11 +126,12 @@ void AudioSdl::Close()
         std::lock_guard<std::mutex> lock(TimerCallbackMutex);
     }
     if (AudioDevice != 0) {
-        SDL_PauseAudioDevice(AudioDevice, 1);
+        if (AudioDeviceStarted) SDL_PauseAudioDevice(AudioDevice, 1);
         SDL_CloseAudioDevice(AudioDevice);
         AudioDevice = 0;
     }
     AudioOpenFlag = false;
+    AudioDeviceStarted = false;
     QuitSubsystems();
 }
 
@@ -157,22 +159,42 @@ bool AudioSdl::UpdateAudioTimer()
     std::lock_guard<std::mutex> callbackLock(TimerCallbackMutex);
     if (ShuttingDown.load(std::memory_order_acquire)) return false;
 
+    const bool sending = Buffer->IsSending();
+    int pending = 0;
+    if (!sending) {
+        const int UpdateTick = Time->GetUpdateTick();
+        pending = Buffer->TickToSamples(UpdateTick);
+    } else {
+        // Keep the elapsed-time baseline current while the device clock owns
+        // the production rate.
+        Time->GetUpdateTick();
+    }
     int s = Buffer->GetLeft();
 
     //　バッファ送出を開始
     if (s == 0) {
         Buffer->StartSending();
+        if (!AudioDeviceStarted && AudioDevice != 0) {
+            SDL_PauseAudioDevice(AudioDevice, 0);
+            AudioDeviceStarted = true;
+        }
         return true;
     }
 
-    int UpdateTick = Time->GetUpdateTick();
-    int u = Buffer->TickToSamples(UpdateTick);
-
-    if (u < s) s = u;
+    // During prefill, preserve the wall-clock/sample relationship. Once the
+    // device is running, replenish what the consumer actually removed.
+    if (!sending && pending < s) s = pending;
     if (AUDIO_BUFFER_BLOCK < s) s = AUDIO_BUFFER_BLOCK;
     s &= ~1;
 
     UpdateSamples(s);
+    if (!sending && Buffer->GetLeft() == 0) {
+        Buffer->StartSending();
+        if (!AudioDeviceStarted && AudioDevice != 0) {
+            SDL_PauseAudioDevice(AudioDevice, 0);
+            AudioDeviceStarted = true;
+        }
+    }
     return !ShuttingDown.load(std::memory_order_acquire);
 }
 
@@ -188,7 +210,8 @@ void AudioSdl::UpdateSamples(int Samples) {
     UserAudioCallback->Run();
 
     // バッファ書き込み
-    Buffer->Write(buf,Samples/2);
+    const int writtenFrames = Buffer->Write(buf, Samples / AUDIO_CHANNELS);
+    Buffer->ConsumeSamples(writtenFrames * AUDIO_CHANNELS);
 } 
 
 // オーディオコールバック

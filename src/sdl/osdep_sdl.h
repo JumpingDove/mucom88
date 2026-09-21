@@ -62,6 +62,7 @@ private:
     AudioBuffer *Buffer;
     AudioTimeInfo *Time;
     bool AudioOpenFlag;
+    bool AudioDeviceStarted;
     SDL_AudioDeviceID AudioDevice;
     SDL_TimerID TimerId;
     Uint32 InitializedSubsystems;
