@@ -24,6 +24,11 @@ SDL_CONFIG ?= sdl2-config
 # 設定ファイル
 include Makefile.setting
 
+ifeq ($(OS_OSX),1)
+COMMON_FLAGS += -mmacosx-version-min=$(MACOSX_DEPLOYMENT_TARGET)
+LDFLAGS += -mmacosx-version-min=$(MACOSX_DEPLOYMENT_TARGET)
+endif
+
 #
 ifeq ($(WIN32),1)
 EXE_SUFFIX = .exe

@@ -42,12 +42,18 @@ cmake -S src -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
 
+The minimum supported release is the macOS 26 family used for this port's
+validation (`CMAKE_OSX_DEPLOYMENT_TARGET=26.0`). A newer target can be selected
+explicitly when configuring CMake.
+
 Alternatively, run `make` in `src`; the Makefile discovers SDL2 through
 `sdl2-config`. Compile-only (`-g`), information (`-i`), and offline output
 (`-x`) do not open an audio device. Real-time playback exits cleanly on
 Ctrl-C. Run `mucom88 -h` for all CLI options. The old `xcode/miniosx` project
 targets SDL 1.2/i386 and is not used for current macOS builds. See
 `IMPORT-FOR-MACOS.md` for porting details and remaining limitations.
+The Makefile also defaults to deployment target 26.0; override it with
+`make MACOSX_DEPLOYMENT_TARGET=<version>` when required.
 
 ## Legacy build environments
 

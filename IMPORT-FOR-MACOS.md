@@ -495,11 +495,11 @@ mucom88 -i song.muc
 ```text
 # Apple Silicon native
 cmake -S src -B build-arm64 -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+  -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=26.0
 
 # Universal Binary
 cmake -S src -B build-universal -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+  -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=26.0
 ```
 
 deployment target 11.0はApple Siliconを含む最小の初期案であり、製品としてどこまで古いmacOSを
@@ -698,13 +698,13 @@ baselineは次の通りである。これは正式goldenではなく、修正後
 実装を開始する前に製品要件として最終確認が必要なのは以下だけである。技術調査上のblockerではなく、
 上記推奨値で着手可能である。
 
-- 最低対応macOSを11.0とするか、より新しくするか
+- 最低対応macOSは検証機と同系列の26.0とする（16章で決定・実装済み）
 - releaseをUniversal単一binaryにするか、arm64/x86_64別配布にするか
 - dependencyをHomebrew前提にするか、SDL2を配布物へ同梱するか
 - realtime再生をCtrl-Cまでとするか、非loop曲の自然終了検出も初期要件に含めるか
 - default PCM/voice dataをinstall対象へ含めるか、利用者が明示指定する方式にするか
 
-推奨defaultは「macOS 11.0、Universal release、開発時Homebrew・配布時SDL2同梱、初期はCtrl-C停止、
+推奨defaultは「macOS 26.0、Universal release、開発時Homebrew・配布時SDL2同梱、初期はCtrl-C停止、
 `mucompcm.bin`と`voice.dat`をlicense/attribution付きでdata directoryへ配置」である。
 
 ## 12. 初期CLI移植の実装結果
@@ -746,7 +746,7 @@ clean buildがwarningなしで成功した。CMake executableは調査環境に�
 
 ### 残課題
 
-- CMake configure/build、x86_64およびUniversal Binary、最低対応macOSでの検証
+- x86_64およびUniversal Binaryでの検証
 - ASan/UBSanおよびTSanを含む自動test/CTestと、不正MUB/WAV/PCM fixtureの常設
 - process-global `chdir`の完全排除。現実装はtag相対path互換のため処理全体を入力directoryで実行し、
   rhythm directoryへの変更だけを初期化中に限定して必ず復元する
@@ -786,6 +786,9 @@ repositoryのtop directoryで次を実行する。
 cmake -S src -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ```
+
+macOSでは、検証機と同じOS系列を最低対応とし、deployment targetは既定で26.0になる。
+明示指定した`CMAKE_OSX_DEPLOYMENT_TARGET`は既定値より優先される。
 
 生成されるCLI executableは通常`build/mucom88`である。build directoryを作り直す場合は、既存の
 成果物が不要であることを確認してから別のbuild directoryを指定するか、既存directoryを削除する。
@@ -872,8 +875,8 @@ lipo -info build-universal/mucom88
 ```
 
 この指定では、SDL2を含む全link dependencyが両architectureを収録している必要がある。Homebrewの
-通常installが片方のarchitectureしか提供しない場合、Universal linkは失敗する。Universal Binary、
-最低対応macOSの`CMAKE_OSX_DEPLOYMENT_TARGET`、SDL2同梱、codesign、notarizationは未検証であり、
+通常installが片方のarchitectureしか提供しない場合、Universal linkは失敗する。deployment target
+26.0はarm64検証機で確認済みだが、Universal Binary、SDL2同梱、codesign、notarizationは未検証であり、
 release配布前に別途確認する。
 
 ## 14. miniplay音声処理のSDL2 device API移行
@@ -1035,3 +1038,15 @@ SDL dummy driverではbuffer制御と終了経路を確認できるが、実際�
 記録する。なお、対策後もノイズが残る場合の次段階は、SDL timerでの生成を廃止してaudio callbackまたは
 専用producer threadをsample clockの基準にする設計変更、およびcallbackで0埋めへ切り替える境界の
 短いfade処理である。
+
+## 16. 最低対応macOSの確定
+
+2026-09-21に、最低対応OSを移植検証機と同じmacOS 26系列とし、deployment targetを26.0に確定した。
+検証機はmacOS 26.6.2（build 25G83）、arm64、Apple clang 21.0.0、macOS SDK 26.5である。patch version
+26.6.2をtarget値にせず26.0とするのは、同じmacOS major系列のdeployment基準として扱うためである。
+
+- CMakeはmacOS上で`CMAKE_OSX_DEPLOYMENT_TARGET`が未指定または空の場合だけ26.0をcacheへ設定する
+- 利用者が`-DCMAKE_OSX_DEPLOYMENT_TARGET=<version>`を指定した場合は、その値を優先する
+- Makefileはcompile/linkの両方へ`-mmacosx-version-min=26.0`を渡す
+- Makefileの値は`make MACOSX_DEPLOYMENT_TARGET=<version>`で上書きできる
+- この決定は古いmacOSでの互換性を保証しない。対応範囲を広げる場合は、対象OS・SDK・SDL2で改めて検証する

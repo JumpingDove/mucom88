@@ -32,6 +32,10 @@ cmake -S src -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
 
+最低対応OSは、この移植の検証環境と同じmacOS 26系列（deployment target 26.0）である。
+より新しいtargetを指定する場合はCMake configure時に
+`-DCMAKE_OSX_DEPLOYMENT_TARGET=<version>`を追加する。
+
 Makefile を直接使用する場合は、`src` ディレクトリで `make` を実行します。SDL2 の検出には
 `sdl2-config` を使用します。
 
@@ -39,6 +43,9 @@ Makefile を直接使用する場合は、`src` ディレクトリで `make` を
 cd src
 make
 ```
+
+Makefileでも既定targetは26.0であり、必要なら
+`make MACOSX_DEPLOYMENT_TARGET=<version>`で上書きできる。
 
 MML のコンパイルだけを行う `-g`、情報表示の `-i`、WAV/VGM/S98 を生成する `-x` は
 音声デバイスを開きません。リアルタイム再生は Ctrl-C で正常終了します。オプション一覧は
