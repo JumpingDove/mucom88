@@ -7,27 +7,28 @@
 コマンドライン版である。MML のコンパイル、MUB の読み書き、fmgen による YM2608
 エミュレーション、WAV/VGM/S98 出力は大部分を共有できる。
 
-ただし、現状を「macOS 対応済み」とは判断できない。`xcode/miniosx` は 2019 年頃の
-SDL 1.2/i386/macOS 10.6 用プロジェクトが途中の状態で残ったもので、現行 Xcode、
-64 bit Intel、Apple Silicon のいずれにもそのまま使用できない。また、トップの
-`src/Makefile` と `src/CMakeLists.txt` にも macOS で実際にビルドを妨げる不整合がある。
+初期調査時に確認した`xcode/miniosx`は、2019年頃のSDL 1.2/i386/macOS 10.6用projectが
+途中の状態で残ったものであり、現在も正規buildには使用しない。一方、`src/CMakeLists.txt`と
+`src/Makefile`の初期CLI移植上の不整合は修正済みで、現在はCMakeを正規build入口として
+Apple Silicon上のRelease/Debug build、CLI、editor core testを実行できる。
 
 推奨する到達順は次の通り。
 
-1. arm64/x86_64 の CLI（コンパイル、MUB 再生、WAV/VGM/S98 書き出し）
-2. SDL2 によるリアルタイム音声再生と正常終了
-3. `pcmtool` と自動テスト
-4. 必要なら macOS ネイティブ GUI、プラグイン、実チップ対応
+1. arm64 CLI（コンパイル、MUB再生、WAV/VGM/S98書き出し）とSDL2再生（実装済み）
+2. MML document/compile serviceと自動試験の拡充（一部実装済み）
+3. macOS native GUI、`pcmtool`、配布物の整備
+4. 必要性を確認した場合のみFM音色editor、plugin、実chip対応
 
 Windows GUI、HSP プラグイン、FM Tone Editor、SCCI2 は Win32 API に強く依存するため、
 CLI 移植とは別プロジェクト相当の作業になる。
 
 ## 2. 調査基準
 
-- 調査時点: 2026-09-12
+- 初期調査時点: 2026-09-12
+- 最終更新: 2026-09-22
 - 対象コミット: `bf008a4` (`trial-import-for-macOS`、調査時の HEAD)
 - 実機: Apple Silicon (`arm64`)、macOS 26.6.2、Apple clang 21.0.0
-- ワークツリーには調査前から未追跡の `.vscode/` がある。本調査では変更していない。
+- 現行build環境: Command Line Tools、CMake 4.4.3、Homebrew SDL2-compat 2.32.72、macOS SDK iconv
 
 実機確認では、標準の `make` は後述の理由で失敗した。一方、Homebrew の SDL2 用
 include/link フラグと、未定義 `DWORD_PTR` に対する一時的なコンパイル時回避を与えると、
@@ -36,6 +37,10 @@ include/link フラグと、未定義 `DWORD_PTR` に対する一時的なコン
 を生成できた。これはコア処理が arm64 上で概ね動作することを示すが、正式な修正や
 互換性試験の代わりにはならない。日本語 PCM 名は文字化けし、文字コード層の問題も
 再現した。
+
+上記は初期調査時の記録である。その後、文字コードを含む初期CLI移植とCMake buildを実装し、
+2026-09-22時点では`build/mucom88`と`build/editor_core_test`をarm64 Mach-Oとして生成し、
+Release/Debug双方のCTestを実行済みである。現在の再現手順は13章を正とする。
 
 ## 3. リポジトリの構成と移植上の意味
 
@@ -479,9 +484,10 @@ mucom88 -i song.muc
 
 - minimum CMake: 3.20
 - language: C11およびC++17、compiler extensionは原則off
-- dependency: `find_package(SDL2 CONFIG REQUIRED)` と `find_package(Iconv REQUIRED)`
-- link: `SDL2::SDL2` と `Iconv::Iconv`。main wrapper targetが提供される環境だけ
-  `SDL2::SDL2main`を条件付きで扱うが、macOS独自の旧`SDLMain.m`は使わない
+- dependency: まず`find_package(SDL2 CONFIG QUIET)`でSDL2 CMake packageを探索し、
+  targetがなければpkg-configの`sdl2`へfallbackする。非Windowsでは`find_package(Iconv REQUIRED)`を使う
+- link: 検出した`SDL2::SDL2`または`PkgConfig::SDL2`と`Iconv::Iconv`。
+  macOS独自の旧`SDLMain.m`は使わない
 - 初期段階ではsourceを`mucom88_runtime` static libraryと`mucom88` executableへ分離
 - macOSで`MUCOM88WIN`を定義しない。`mucomvm.cpp`をcompileするruntime targetに
   `USE_SDL=1`を定義
@@ -502,9 +508,9 @@ cmake -S src -B build-universal -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=26.0
 ```
 
-deployment target 11.0はApple Siliconを含む最小の初期案であり、製品としてどこまで古いmacOSを
-支援するかにより最終決定する。Universal buildではSDL2 dependency自体も両architectureを
-含む必要がある。arm64だけのHomebrew SDL2をlinkしてUniversal化することはできない。
+deployment targetは16章の決定に従って26.0を既定とする。Universal buildではSDL2 dependency自体も
+両architectureを含む必要がある。arm64だけのHomebrew SDL2互換libraryをlinkしてUniversal化することは
+できない。
 
 既存Makefileは同じ変更内で無理に全面改修しない。CMakeでacceptanceが通った後、削除するか、
 SDL2/pkg-config対応の薄い互換入口として維持するかを決める。二つのsource listを手管理し続けない。
@@ -515,7 +521,9 @@ SDL2/pkg-config対応の薄い互換入口として維持するかを決める�
 
 ```text
 membuf.cpp adpcm.cpp md5.c soundbuf.cpp cmucom.cpp mucomvm.cpp
-mucomerror.cpp callback.cpp osdep.cpp plugin/plugin.cpp
+mucomerror.cpp callback.cpp osdep.cpp
+editor/mml_document.cpp editor/mucom_compile_service.cpp
+plugin/plugin.cpp
 Z80/Z80.cpp
 fmgen/file.cpp fmgen/fmgen.cpp fmgen/fmtimer.cpp
 fmgen/opm.cpp fmgen/opna.cpp fmgen/psg.cpp
@@ -529,6 +537,10 @@ sdl/osdep_sdl.cpp sdl/audiobuffer.cpp sdl/audiotime.cpp
 だけへdefinitionを付けても動かない。runtime target全体にprivate definitionとして付与する。
 この構成は最小移植用であり、将来backendをruntime injectionする場合はportable coreと
 platform backendを循環依存なしに分離する変更を別途行う。
+
+`BUILD_TESTING=ON`の場合は`tests/editor_core_test.cpp`から`editor_core_test` executableも生成し、
+CTestへ登録する。このtestはMML documentの保存とdirty状態、文書相対のvoice/PCM compile、
+再生開始・停止、`voice.dat`の読み取り専用性、FM editor用一時音色fileの無視、埋め込みNUL拒否を確認する。
 
 次は初期targetへ含めない。
 
@@ -730,9 +742,9 @@ SCCI実chip、旧Xcode projectの再生は対象外である。
 
 ### 実機確認結果
 
-Apple Silicon/macOS 26.6.2、Apple clang 21、Homebrew SDL2/iconvの環境で、Makefileによるarm64
-clean buildがwarningなしで成功した。CMake executableは調査環境に未導入のため、CMake configureは
-未実行である。
+Apple Silicon/macOS 26.6.2、Apple clang 21の環境で、Makefileによるarm64 clean buildに加え、
+2026-09-22にはCMake 4.4.3とHomebrew SDL2-compat 2.32.72を使用したRelease/Debug buildを確認した。
+iconvはHomebrew版ではなくCommand Line Tools SDKの`libiconv.tbd`が検出されている。
 
 | case | 結果 |
 |---|---|
@@ -743,38 +755,58 @@ clean buildがwarningなしで成功した。CMake executableは調査環境に�
 | 1秒VGM | 2,396 byte |
 | legacy日本語PCM名 | `ｺｰﾗｽ`をUTF-8 terminalへ正常表示 |
 | realtime再生 | SDL dummy deviceで開始し、Ctrl-C後exit 0、hangなし |
+| CMake Release/Debug | `build/`と`build-debug/`のconfigure、compile、link成功 |
+| CTest | Release/Debugの`editor_core_test`が成功 |
+| architecture | `mucom88`と`editor_core_test`はいずれもMach-O 64-bit arm64 |
 
 ### 残課題
 
 - x86_64およびUniversal Binaryでの検証
-- ASan/UBSanおよびTSanを含む自動test/CTestと、不正MUB/WAV/PCM fixtureの常設
+- CTestはeditor core 1件を常設済み。CLI golden、不正MUB/WAV/PCM、ASan/UBSan、TSan試験の追加
 - process-global `chdir`の完全排除。現実装はtag相対path互換のため処理全体を入力directoryで実行し、
   rhythm directoryへの変更だけを初期化中に限定して必ず復元する
 - install後のdefault data directory、SDL2同梱、`@rpath`、codesign、notarization
 - 曲の自然終了検出。初期仕様は従来通りCtrl-C停止
 - `pcmtool`のpath/name境界修正と独立target化
 
-## 13. macOS CLIのビルド手順
+## 13. macOSのビルド・テスト手順
 
 ### 13.1 前提環境
 
-初期CLI移植では、64 bit macOS、Apple clang、SDL2、iconvを使用する。開発環境の依存関係は
-Homebrewで導入する方法を標準とする。
+初期CLI移植では、64 bit macOS、Apple clang、SDL2互換library、iconvを使用する。
+compiler/SDKはCommand Line Tools、CMakeとSDL2互換libraryはHomebrewで導入する方法を標準とする。
+2026-09-22の検証機ではSDL2 API/ABIを提供する`SDL2-compat`を使用している。
 
 ```sh
 xcode-select --install
-brew install cmake sdl2
+brew install cmake sdl2-compat
 ```
 
 `xcode-select --install`で既にCommand Line Toolsが導入済みの場合、再インストールは不要である。
-iconvはmacOS SDKにも含まれるが、Makefile buildでは環境に応じてHomebrewのlibraryが使用される。
-以下でtoolとSDL2を確認できる。
+iconvはmacOS SDKに含まれ、現行CMake buildではSDKのheaderと`libiconv.tbd`を使用する。
+SDL2本体のCMake packageを利用できる環境でもbuild可能だが、検証済み構成はSDL2-compatである。
+以下でtoolとSDL2互換versionを確認できる。
 
 ```sh
 clang++ --version
 cmake --version
 sdl2-config --version
 ```
+
+検証済み環境の値は次の通りである。
+
+| 項目 | 値 |
+|---|---|
+| host | Apple Silicon、`arm64` |
+| macOS | 26.6.2、build 25G83 |
+| Command Line Tools | `/Library/Developer/CommandLineTools` |
+| Apple clang | 21.0.0 (`clang-2100.1.1.101`) |
+| macOS SDK | 26.5 |
+| CMake | 4.4.3（projectの要求minimumは3.20） |
+| SDL2 provider | Homebrew SDL2-compat 2.32.72 |
+| SDL2 CMake package | `/opt/homebrew/lib/cmake/SDL2` |
+| iconv | SDKの`libiconv.tbd`（runtimeは`/usr/lib/libiconv.2.dylib`） |
+| pkg-config | 未導入。SDL2 config packageが見つかるため現構成では不要 |
 
 旧SDL 1.2の`SDL.framework`、`sdl-config`、`xcode/miniosx` projectは使用しない。
 
@@ -801,6 +833,22 @@ cmake -S src -B build-debug -DCMAKE_BUILD_TYPE=Debug
 cmake --build build-debug --parallel
 ```
 
+`include(CTest)`により`BUILD_TESTING`の既定値は`ON`である。CLIだけを生成する場合はconfigure時に
+`-DBUILD_TESTING=OFF`を指定できる。通常の開発・検証ではtestを明示して次の形を推奨する。
+
+```sh
+cmake -S src -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+
+cmake -S src -B build-debug -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+cmake --build build-debug --parallel
+ctest --test-dir build-debug --output-on-failure
+```
+
+生成物は`build/mucom88`、`build/libmucom88_runtime.a`、test有効時は
+`build/editor_core_test`である。CTestに登録されるtestは現在`editor_core_test` 1件である。
+
 任意のprefixへinstallする場合は次のように指定する。現在のinstall targetはCLI executableのみで、
 `mucompcm.bin`、`voice.dat`、SDL2 dylibの配置はまだ自動化されていない。
 
@@ -811,7 +859,20 @@ cmake --build build --parallel
 cmake --install build
 ```
 
-### 13.3 Makefileによるビルド
+### 13.3 CTestと回帰確認
+
+登録済みtestの一覧と実行方法は次の通りである。
+
+```sh
+ctest --test-dir build -N
+ctest --test-dir build --output-on-failure
+```
+
+`editor_core_test`は一時directoryへsample、PCM、voiceを複製して動作し、repositoryのfixtureを
+書き換えない。`sampl1.muc`を文書相対の`voice.dat`と`mucompcm.bin`でcompileし、再生開始・停止まで
+確認する。また、MML保存・compileの前後で`voice.dat`が不変であることを検証する。
+
+### 13.4 Makefileによるビルド
 
 CMakeを使用しない場合は`src` directoryでbuildする。SDL2は`sdl2-config`から検出される。
 
@@ -829,7 +890,11 @@ make CC=clang CXX=clang++ SDL_CONFIG=sdl2-config
 通常の成果物を削除する場合は`src` directoryで`make clean`を実行する。ただし同directory内の
 対象名と`objs` directoryが削除対象になるため、利用者自身の同名fileを置かないこと。
 
-### 13.4 最小動作確認
+MakefileはCLIと`miniplay`の補助入口として残している。新しい`MmlDocument`、
+`MucomCompileService`、`editor_core_test`はCMake targetで管理しているため、editor基盤を含む
+正式な検証にはCMakeを使用する。
+
+### 13.5 最小動作確認
 
 以下はrepository top directoryで、CMake buildのexecutableを使う例である。Makefile buildでは
 `./build/mucom88`を`./src/mucom88`へ読み替える。
@@ -855,13 +920,14 @@ make CC=clang CXX=clang++ SDL_CONFIG=sdl2-config
 compile-only（`-g`）、情報表示（`-i`）、offline output（`-x`）はaudio deviceを開かないため、
 GUI sessionや音声出力のないCI環境でも使用できる。
 
-### 13.5 architectureの確認とUniversal Binary
+### 13.6 architectureとlink dependencyの確認
 
 通常のbuildは実行中macOSのnative architectureを生成する。生成物は次で確認する。
 
 ```sh
 file build/mucom88
 lipo -info build/mucom88
+otool -L build/mucom88
 ```
 
 arm64とx86_64を含むUniversal Binaryを試作する場合は、CMake configure時にarchitectureを指定する。
@@ -878,6 +944,11 @@ lipo -info build-universal/mucom88
 通常installが片方のarchitectureしか提供しない場合、Universal linkは失敗する。deployment target
 26.0はarm64検証機で確認済みだが、Universal Binary、SDL2同梱、codesign、notarizationは未検証であり、
 release配布前に別途確認する。
+
+現在のarm64 buildはHomebrewの
+`/opt/homebrew/opt/sdl2-compat/lib/libSDL2-2.0.0.dylib`へlinkしている。この絶対pathは開発機での
+実行には使用できるが、そのまま配布可能なapp/CLI構成ではない。配布時はSDL2 dylibの同梱、
+`@rpath`の設定、codesign、notarizationを別途実施する。
 
 ## 14. miniplay音声処理のSDL2 device API移行
 
@@ -910,7 +981,8 @@ release配布前に別途確認する。
 
 ### 14.2 検証結果
 
-Apple Silicon/macOS 26.6.2、Apple clang 21、Homebrew SDL2/iconvの環境で次を確認した。
+Apple Silicon/macOS 26.6.2、Apple clang 21、Homebrew SDL2-compat 2.32.72、SDK iconvの環境で
+次を確認した。
 
 | case | 結果 |
 |---|---|
@@ -1020,7 +1092,8 @@ ring bufferのhigh-water markは従来の`BufferSize - BlockSize`を維持する
 
 ### 15.3 検証結果
 
-Apple Silicon/macOS 26.6.2、Apple clang 21、Homebrew SDL2/iconv環境で次を確認した。
+Apple Silicon/macOS 26.6.2、Apple clang 21、Homebrew SDL2-compat 2.32.72、SDK iconv環境で
+次を確認した。
 
 | case | 結果 |
 |---|---|

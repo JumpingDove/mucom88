@@ -41,6 +41,8 @@ add_library(mucom88_runtime STATIC
     mucomerror.cpp
     callback.cpp
     osdep.cpp
+    editor/mml_document.cpp
+    editor/mucom_compile_service.cpp
     plugin/plugin.cpp
     Z80/Z80.cpp
     fmgen/file.cpp
@@ -76,3 +78,12 @@ target_compile_definitions(mucom88 PRIVATE USE_SDL=1)
 target_link_libraries(mucom88 PRIVATE mucom88_runtime ${MUCOM88_SDL_TARGET})
 
 install(TARGETS mucom88 RUNTIME DESTINATION bin)
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(editor_core_test tests/editor_core_test.cpp)
+    target_link_libraries(editor_core_test PRIVATE mucom88_runtime ${MUCOM88_SDL_TARGET})
+    target_compile_definitions(editor_core_test PRIVATE
+        MUCOM88_PROJECT_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/..")
+    add_test(NAME editor_core_test COMMAND editor_core_test)
+endif()

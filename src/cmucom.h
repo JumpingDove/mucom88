@@ -401,6 +401,8 @@ public:
 	int SaveMusic(const char *fname, int start, int length, int option = 0);
 	int LoadTagFromMusic(int num);
 	void AddExtraInfo(char *mmlsource);
+	void SetResourceDirectory(const char *directory);
+	void SetFMVoiceReadOnly(bool readOnly) { fmvoice_read_only = readOnly; }
 
 	//	VM log service
 	const char *GetMessageBuffer(void);
@@ -537,6 +539,7 @@ private:
 	bool octreverse_mode; // octave reverse mode
 	bool compiler_initialized; // 初期化後
 	bool use_extram;
+	bool fmvoice_read_only;
 	int  original_ver;	// original mode version (MUCOM_ORIGINAL_VER_*)
 	int extram_disable_vec;
 	int extram_enable_vec;
@@ -552,6 +555,7 @@ private:
 	std::string voicefilename;	// loaded VOICE file
 	std::string tempfilename;	// temp VOICE file
 	std::string voice_pathname;	// voice pathname
+	std::string resource_directory; // base directory for relative MML resources
 	MUCOM88_VOICEFORMAT fmvoice_internal[MUCOM_FMVOICE_MAXNO];
 	MUCOM88_VOICEFORMAT *fmvoice_original;
 	unsigned char fmvoice_use[MUCOM_FMVOICE_MAX];	// use FM voice no. table
@@ -611,6 +615,7 @@ private:
 	//		Sound Buffer
 	void MusicBufferInit(void);
 	void MusicBufferTerm(void);
+	std::string ResolveResourcePath(const char *filename) const;
 	CMemBuf *musbuf[MUCOM_MUSICBUFFER_MAX];
 
 	//		Audio

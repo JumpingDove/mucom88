@@ -26,9 +26,21 @@ macOS版MUCOM88をWindows版と比較し、機能同等化に必要な作業、�
 | レベル | 対象 | 現状 |
 |---|---|---|
 | Level 1 | CLIのコンパイル、再生、各種ファイル出力 | 一部達成。厳密なWindows比較が未完了 |
-| Level 2 | 通常のGUI編集・再生ワークフロー | 未着手 |
+| Level 2 | 通常のGUI編集・再生ワークフロー | 文書・compile service基礎を一部実装。GUIは未着手 |
 | Level 3 | FM音色エディタ、PCMツール、MIDI、モニター | 未着手または部分実装 |
 | Level 4 | プラグイン、実チップ、外部ドライバ | 未着手。user-mode機能を優先し、実チップは条件付き |
+
+### macOS初期版の編集機能スコープ
+
+macOS初期版ではMML文書編集とFM音色エディタ／pluginを分離する。通常の曲作成に必要な
+`#voice`、既定の`voice.dat`、MML内の`@n:{...}`音色定義は対応する一方、V.EDIT、音色parameterの
+GUI編集、再生中voice更新、編集した`voice.dat`の保存、pluginからのMML更新は初期版の完了条件に
+含めない。
+
+`voice.dat`はcompile時の読み取り専用resourceとする。macOS文書の保存はMML textだけを対象とし、
+Windows editor互換APIの`SaveEditorMML()`や一時音色fileを経由しない。利用者は外部`voice.dat`の
+参照またはMML内音色定義でFM音色を指定できる。対話的FM音色編集と汎用plugin機構は初期版完成後、
+需要と安全なAPI境界を確認して採否を再判断する。
 
 ## Phase 0: 互換性基準の確定
 
@@ -39,6 +51,7 @@ macOS版MUCOM88をWindows版と比較し、機能同等化に必要な作業、�
 - [ ] Windows ARM VMで終了code、標準出力、標準errorの期待値を記録する
 - [ ] GUI、user-mode plugin、実chip代替方針を含む受入試験表を作成する
 - [ ] Windows固有機能について、同等動作、macOS向け代替、非対応のいずれかを決定する
+- [x] 初期MML editorからFM音色editorとpluginを分離し、`voice.dat`を読み取り専用入力とする
 
 ### 固定済みWindows比較対象
 
@@ -212,7 +225,7 @@ shasum -a 256 \
 | `GUI-EDIT-03` | 必須 | cursor位置に対応するMML行番号表示 | status表示またはeditor gutter | cursor移動に追従して論理行を表示する |
 | `GUI-EDIT-04` | 必須 | New、Load、Save、Save As、上書き確認 | macOS Document操作へ対応付ける | 新規・読込・保存・別名保存を往復できる |
 | `GUI-EDIT-05` | 必須 | MUC、N88-BASIC source、任意textの読込 | open panelのtype filterと安全なencoding判定 | `.muc`と`.n88`を開ける。未知textは明示確認する |
-| `GUI-EDIT-06` | 必須 | MMLまたは編集中voiceの変更検出 | document dirty stateに統合する | load、新規、終了時に未保存変更を破棄しない |
+| `GUI-EDIT-06` | 必須 | MMLまたは編集中voiceの変更検出 | 初期版はMML textだけをdocument dirty stateに反映。voice編集は別機能として延期する | load、新規、終了時に未保存のMML変更を破棄しない |
 | `GUI-EDIT-07` | 必須 | Window titleへ編集中file名を表示 | document window titleへ反映する | file切替・保存後にtitleが更新される |
 | `GUI-EDIT-08` | 必須 | F1、Ctrl+S、F5/F12、Esc、Ctrl+F1 shortcut | macOS標準shortcutを主とし、互換shortcutも可能な範囲で維持する | menuとkeyboardの両方から同じ操作ができる |
 | `GUI-EDIT-09` | 必須 | 終了時の未保存確認と一時file破棄 | document close/app termination処理へ統合する | cancel、破棄、保存の各経路でdata lossや残骸がない |
@@ -294,7 +307,7 @@ shasum -a 256 \
 | `GUI-SET-03` | 必須 | 日本語・英語UI切替 | localization resourceとして実装する | 再起動後も選択言語が維持される |
 | `GUI-SET-04` | 任意 | window size/position、editor font、文字色、背景色 | macOS window restorationとeditor appearanceへ対応付ける | 複数displayを含め安全な位置へ復元する |
 | `GUI-SET-05` | 必須 | file directory、各option、UUID等の永続化 | `UserDefaults`等へschema/version付きで保存する | 設定破損時にdefaultへ安全に戻る |
-| `GUI-FMEDIT-01` | 任意 | V.EDITとFM editor plugin連携、再生中voice更新 | Phase 5の内蔵moduleまたは新plugin APIで提供する | 起動、編集、反映、保存、終了を安全に実行できる |
+| `GUI-FMEDIT-01` | 任意 | V.EDITとFM editor plugin連携、再生中voice更新 | 初期版は非対応。Phase 5で採用する場合もMML editorから分離した内蔵moduleまたは別appとする | 採用時は起動、編集、反映、保存、終了を安全に実行できる |
 | `GUI-SCCI-01` | 任意 | SCCI2使用切替、software FM mute、設定utility起動 | Windows ARM VMでは画面・設定まで。macOS実chipはPhase 7で採否を決める | 非採用時は制約を表示。採用時だけ対応実機で再生・切断を確認する |
 | `GUI-DOTNET-01` | 任意 | MucomDotNET folder指定、外部compile/player起動 | Phase 8で採否を決定する | 採用時はspaceを含むpathでもcompile・再生できる |
 | `GUI-UPD-01` | 廃止候補 | 起動時に`updcheck.exe`を実行 | 署名済みappの更新機構を採用する場合だけ別方式で実装する | 任意に無効化でき、起動を妨げない |
@@ -404,18 +417,27 @@ golden値ではない。生成結果は別のPhase 0項目でWindows ARM VMと�
 Windows GUIは `hspplugin/hspmucom.cpp` を経由してコアを操作する。macOS GUIから
 `CMucom`、`mucomvm`や内部bufferを直接操作せずに済む、platform非依存APIを用意する。
 
-- [ ] 初期化、終了、resetのAPIを定義する
-- [ ] MUC compile、文字列compile、MUB読込のAPIを定義する
-- [ ] 再生、停止、fade、早送り、低速再生、音量のAPIを定義する
-- [ ] PCM、voice、tag、UUID、driver optionのAPIを定義する
-- [ ] compile結果、error、現在行、再生状態を取得できるようにする
+- [-] 初期化、終了、resetのAPIを定義する
+- [-] MUC compile、文字列compile、MUB読込のAPIを定義する
+- [-] 再生、停止、fade、早送り、低速再生、音量のAPIを定義する
+- [-] PCM、voice、tag、UUID、driver optionのAPIを定義する
+- [-] compile結果、error、現在行、再生状態を取得できるようにする
 - [ ] channel状態と音源状態をsnapshotとして取得できるようにする
-- [ ] MML text更新、保存要求、editor要求をUI非依存のeventへ整理する
-- [ ] voice取得、更新、保存、dumpのAPIを定義する
+- [-] MML text更新、保存要求、editor要求をUI非依存のeventへ整理する
+- [ ] voice取得、更新、保存、dumpのAPIを定義する（初期版は読み取り専用voice参照だけを使用）
 - [ ] WAV、VGM、S98出力をGUIから安全に実行できるAPIを定義する
-- [ ] object寿命、thread、callback、memory所有権を明文化する
-- [ ] C++例外や内部pointerがAPI境界を越えないようにする
-- [ ] API単体試験を追加する
+- [-] object寿命、thread、callback、memory所有権を明文化する
+- [-] C++例外や内部pointerがAPI境界を越えないようにする
+- [-] API単体試験を追加する
+
+実装済みの基礎境界:
+
+- `MmlDocument`がMML text、保存済みsnapshot、path、dirty状態を所有し、保存時にvoice dataへ触れない
+- `MucomCompileService`が所有権を持つMML snapshotを受け取り、legacy compilerへ渡す可変bufferを内部生成する
+- compile結果はstatus、message、行番号付きdiagnosticとして返し、`CMucom`や内部bufferのpointerを公開しない
+- `#voice`と`#pcm`の相対pathは文書のresource directoryから解決し、process-wide `chdir()`を使用しない
+- editor serviceでは一時音色fileを読まず、`voice.dat`を読み取り専用として扱う
+- serviceは同時呼出しを許可せず、GUI側の直列workerから使用する。非同期job管理とcancelは未実装
 
 ### 完了条件
 
@@ -429,12 +451,17 @@ Windows HSP画面を直接移植せず、SwiftUI/AppKitなどmacOSで保守可�
 
 ### Documentとeditor
 
-- [ ] 新規作成、開く、保存、別名保存を実装する
+- [-] 新規作成、開く、保存、別名保存を実装する
 - [ ] 未保存変更の確認、autosave、crash後の復旧を実装する
 - [ ] MUC/MUBのFinder関連付け、drag and drop、最近使ったfileを実装する
 - [ ] MML editor、行番号、検索、compile error行への移動を実装する
 - [ ] 日本語入力、CP932/UTF-8変換、macOSのUnicode正規化を検証する
 - [ ] sandboxを採用する場合はsecurity-scoped bookmarkで外部dataを保持する
+
+`MmlDocument`によるbyte保持の読込、保存、別名保存、dirty判定は実装済み。現時点では
+AppKit/SwiftUIのwindow、encoding自動判定、CP932への再変換、autosave、Undoとの接続が未実装である。
+macOS UIは`CMucom::Editor*`およびpluginのtext更新commandを使用せず、このdocument modelから
+immutableなcompile requestを作成する。
 
 ### 再生と表示
 
@@ -482,9 +509,11 @@ Windows HSP画面を直接移植せず、SwiftUI/AppKitなどmacOSで保守可�
 - device変更や切断から安全に復旧するか、利用者へ明確なerrorを通知する
 - 自動試験と実device聴感試験の両方を通過する
 
-## Phase 5: FM音色エディタとMIDI
+## Phase 5: FM音色エディタとMIDI（初期版後の任意機能）
 
 現在のFM音色エディタはWin32 window、GDI、WinMM MIDI、Windows timerへ依存している。
+初期macOS版では本Phaseを実施しなくてもLevel 2を完了できる。採用する場合もMML文書保存と
+`voice.dat`保存を再結合せず、独立したmoduleまたは別appとして実装する。
 
 - [ ] `ToneParam`とvoice data処理をWin32 UIから分離する
 - [ ] AR/DR/SR/RR/SL/TL/KS/ML/DT、FB、ALの編集modelを試験する
@@ -504,10 +533,12 @@ Windows HSP画面を直接移植せず、SwiftUI/AppKitなどmacOSで保守可�
 - MIDI keyboardから安全に試聴できる
 - Windows版とのvoice data相互交換試験を通過する
 
-## Phase 6: Plugin
+## Phase 6: Plugin（初期版では非対応）
 
 既存のWindows plugin ABIはDLL、`__stdcall`、Win32 handle、C++ objectの生pointerを含むため、
 既存DLLをmacOSで直接利用することは対象外とする。
+macOS初期版はplugin fileを探索・loadせず、plugin通知やplugin起点のMML変更も行わない。
+本Phaseは初期release後に具体的なuse caseが確認できた場合だけ着手する。
 
 - [ ] macOS pluginで提供すべきuse caseを確定する
 - [ ] version付きの安定したC ABIまたはprocess間protocolを設計する
@@ -591,7 +622,7 @@ macOSから直接利用可能な公開protocolと検証用hardwareを確保で�
 - [ ] compile、MUB、WAV、VGM、S98の結果を比較する
 - [ ] 連続再生、停止、曲切替、device切替、終了を長時間試験する
 - [ ] 日本語MML、tag、path、voice名を試験する
-- [ ] FM editor、CoreMIDI、plugin、および採用した場合のみ実chip機能を実機試験する
+- [ ] FM editor、CoreMIDI、pluginは採用した場合のみ、実chip機能は採用した場合のみ実機試験する
 - [ ] arm64とx86_64またはUniversal Binaryを試験する
 - [ ] 既知の非互換、未対応機能、回避策をrelease noteへ記載する
 
@@ -600,9 +631,8 @@ macOSから直接利用可能な公開protocolと検証用hardwareを確保で�
 1. Phase 0～1: Windows ARM VMとの機能比較基準とCLI出力互換
 2. Phase 2: GUIから利用できる安定したコアAPI
 3. Phase 3～4: 通常の編集・再生を行えるmacOS app
-4. Phase 5: FM音色エディタ、PCM、MIDI、monitor
-5. Phase 9～10: 署名済み配布物と受入試験
-6. Phase 6～8: plugin、実chip、MucomDotNET。外部仕様と需要に応じて着手する
+4. Phase 3内のPCM toolとmonitor、およびPhase 9～10: 署名済み配布物と受入試験
+5. Phase 5～8: FM音色editor、MIDI、plugin、実chip、MucomDotNET。初期版完成後に需要と外部仕様に応じて着手する
 
 ## 実施履歴
 
@@ -613,3 +643,4 @@ macOSから直接利用可能な公開protocolと検証用hardwareを確保で�
 | 2026-09-21 | Phase 0一部完了 | Windows比較対象をMUCOM88 Windows 0.70 / OpenMucom88 1.7dの同梱x86 binaryへ固定。基本driver 3種と拡張componentを分離 | commit、PE architecture、size、SHA-256、source内version定義を確認 |
 | 2026-09-21 | Phase 0一部完了 | Windows GUIを操作単位で53項目に分解し、必須・任意・廃止候補へ分類 | `mucom88win.hsp`、`mod_mucom88.as`、`aplayer.hsp`、`vplayer.hsp`、`package/readme.txt`を照合 |
 | 2026-09-21 | 方針変更 | Windows比較をApple Silicon上のWindows 11 ARM64 VMだけで進める方式へ変更。x86 emulation結果を機能比較基準とし、x64固有性能とARM64 driverのない実chipを完了条件から除外 | Windows componentがPE32/x86であること、Windows on Armのuser-mode emulation範囲、projectのSCCI2依存を確認 |
+| 2026-09-21 | Phase 2/3一部実装 | macOS初期MML editorからFM音色editor/pluginを分離。text-onlyの`MmlDocument`、snapshot compile用`MucomCompileService`、文書相対resource解決、voice read-only modeを追加 | `editor_core_test`で`sampl1.muc`の文書相対voice/PCM compile・再生開始・停止、MML保存前後の`voice.dat`不変、旧一時音色fileの無視、dirty状態、NUL拒否を確認 |

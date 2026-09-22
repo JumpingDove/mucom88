@@ -142,6 +142,7 @@ CMucom::CMucom( void )
 	original_ver = MUCOM_ORIGINAL_VER_17;
 	compiler_initialized = false;
 	use_extram = false;
+	fmvoice_read_only = false;
 	flag = 0;
 	vm = NULL;
 	infobuf = NULL;
@@ -1176,12 +1177,35 @@ int CMucom::LoadFMVoiceFromTAG(void)
 
 	//	voiceファイルをロードしておく
 	char voicefile[MUCOM_FILE_MAXSTR];
-	strncpy(voicefile, GetInfoBufferByName("voice"), MUCOM_FILE_MAXSTR);
+	strncpy(voicefile, GetInfoBufferByName("voice"), MUCOM_FILE_MAXSTR - 1);
+	voicefile[MUCOM_FILE_MAXSTR - 1] = 0;
 	if (voicefile[0]) {
-		LoadFMVoice(voicefile);
+		const std::string voicepath = ResolveResourcePath(voicefile);
+		LoadFMVoice(voicepath.c_str(), fmvoice_read_only);
 	}
 
 	return 0;
+}
+
+
+void CMucom::SetResourceDirectory(const char *directory)
+{
+	resource_directory = directory == NULL ? "" : directory;
+	while (resource_directory.size() > 1 &&
+		(resource_directory.back() == '/' || resource_directory.back() == '\\')) {
+		resource_directory.pop_back();
+	}
+}
+
+
+std::string CMucom::ResolveResourcePath(const char *filename) const
+{
+	if (filename == NULL || *filename == 0) return std::string();
+	const std::string path(filename);
+	const bool absolute = path[0] == '/' || path[0] == '\\' ||
+		(path.size() >= 2 && path[1] == ':');
+	if (absolute || resource_directory.empty()) return path;
+	return resource_directory + "/" + path;
 }
 
 void CMucom::EnableBreakPoint(uint16_t adr)
@@ -1723,9 +1747,11 @@ int CMucom::Compile(char *text, int option, bool writeMub, const char *filename)
 	//		voiceタグの解析
 	if ((option & MUCOM_COMPILE_IGNOREVOICE) == 0) {
 		char voicefile[MUCOM_FILE_MAXSTR];
-		strncpy(voicefile, GetInfoBufferByName("voice"), MUCOM_FILE_MAXSTR);
+		strncpy(voicefile, GetInfoBufferByName("voice"), MUCOM_FILE_MAXSTR - 1);
+		voicefile[MUCOM_FILE_MAXSTR - 1] = 0;
 		if (voicefile[0]) {
-			LoadFMVoice(voicefile);
+			const std::string voicepath = ResolveResourcePath(voicefile);
+			LoadFMVoice(voicepath.c_str(), fmvoice_read_only);
 		}
 	}
 
@@ -2145,7 +2171,8 @@ int CMucom::SaveMusic(const char *fname,int start, int length, int option)
 	if ((option & MUCOM_COMPILE_IGNOREPCM) == 0) {
 		pcmname = GetInfoBufferByName("pcm");
 		if (pcmname[0] != 0) {
-			pcmdata = vm->LoadAlloc(pcmname, &pcmsize);
+			const std::string pcmpath = ResolveResourcePath(pcmname);
+			pcmdata = vm->LoadAlloc(pcmpath.c_str(), &pcmsize);
 			if (pcmdata != NULL) {
 				hed.pcmdata = hed.tagdata + footsize;
 				hed.pcmsize = pcmsize;
