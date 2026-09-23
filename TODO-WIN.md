@@ -268,6 +268,250 @@ AppKit UIは上記serviceだけを利用する。compile、再生、exportはwor
 immutable snapshotとして渡す。一つのaudio outputを複数documentが競合して所有しないよう、active sessionの
 切替規則を定義する。
 
+### Phase 2設計の前提
+
+Phase 2は既存の`CMucom`をそのままUI向けclassで包む作業としない。次の3点を先に
+成立させる。
+
+1. compile結果を`CMucom`内部の`musbuf[0]`から切り離し、所有権を持つ不変なMUB dataにする
+2. GUI再生時はVM、Z80、channel dataを単一のplayback workerからだけ操作する
+3. audio deviceとactive playback sessionをdocumentごとではなくapplication全体で1つだけ所有する
+
+現在の`MucomCompileService`はcompile、`PlayCompiled`、`Stop`を同一runtimeで扱い、AppKit側は
+documentごとにそのruntimeを所有している。この構造のまま再生を追加すると複数documentがaudio
+deviceを競合するため、compileとplaybackの分離を先行する。
+
+また、現在のSDL timer callbackは`mucomvm::UpdateTime`を呼び出すが、`busyflag`と`tmflag`は
+thread同期用ではない。GUI側からstop、resume、monitor取得を並行させる設計にはしない。
+
+### 目標とする所有関係
+
+```text
+NSDocument
+   |
+   +-- DocumentService -- DocumentSnapshot
+   |                         |
+   |                         v
+   +------------------ CompileService -- CompiledSong
+                                          |
+                         +----------------+----------------+
+                         v                                 v
+                 PlaybackCoordinator                 ExportService
+                         |
+                  PlaybackSession
+                         |
+                 AudioDeviceService
+                         |
+                 SDL_OpenAudioDevice
+
+PlaybackSession -- immutable MonitorSnapshot
+VoiceService    -- immutable VoiceBank
+```
+
+`CMucom`、`mucomvm`、`PCHDATA`、`MUCOM88_VOICEFORMAT`はservice実装の内側だけで使用する。
+AppKitと将来のbrowser、player、FM音色editorはserviceの値型だけを参照する。
+
+### 全service共通contract
+
+次の値型をserviceに先行して定義する。
+
+- `DocumentId`: documentを識別するUUID
+- `Revision`: textまたはvoiceの変更ごとに増える番号
+- `OperationId`: compile、save、export等の非同期要求ごとの番号
+- `SessionId`: active playbackの切替ごとに増える番号
+- `CancellationToken`: workerが処理単位ごとに確認する協調的なcancel
+- `ServiceError`: domain、code、message、path、recoverableを持つerror値
+- `OperationResult<T>`: 成功値または`ServiceError`
+- `OperationHandle`: `OperationId`と`Cancel()`だけを公開するhandle
+
+共通規則は次の通りとする。
+
+- public service APIの外へC++例外を出さず、入口でcatchして`ServiceError`へ変換する
+- callbackに`OperationId`、`DocumentId`、`Revision`を含め、UIは現在revisionと一致しない結果を破棄する
+- completion callbackはUI dispatcher経由でmain threadへ送る
+- operationのcompletionは原則1回とし、購読解除済みのUI objectには送らない
+- serviceはraw pointer、内部bufferへの参照、不定な寿命の`string_view`を返さない
+- documentが閉じた後もworkerがAppKit objectを参照しない
+- shutdownは「新規受付停止→operation cancel→playback worker停止→audio device close→queue破棄」の順に行う
+
+### `DocumentService`
+
+service内部のtextはUTF-8に正規化し、UIへは次の情報を持つ不変な`DocumentSnapshot`を渡す。
+
+- UTF-8 text、元encoding、BOMの有無、改行形式
+- path、resource root、`DocumentId`、現在revision、保存済みrevision
+- 元fileのsize、mtime、hashとrecovery ID
+
+encodingはBOM付きUTF-8、strict UTF-8、CP932／Shift_JISの順に判定する。CP932とShift_JISを
+自動判別できない場合は推定値として保持し、UIから明示変更できるcontractにする。
+保存時に元encodingへ無損失変換できない場合は暗黙置換せずerrorとし、UTF-8での別名保存を
+選択できるようにする。
+
+保存は同一directoryの一時fileへ書き、close成功後にrenameするatomic saveとする。非同期保存中に
+編集が進んだ場合は、保存対象revisionだけを保存済みとし、新しいrevisionを誤ってcleanにしない。
+autosave／recoveryは元fileを上書きせず、Application Support配下へdocument ID、revision、encoding、
+元path、text hashを持つsnapshotを保存する。
+
+### `CompileService`
+
+`PlayCompiled`と`Stop`をCompileServiceから分離し、compileの入出力を不変な値に限定する。
+
+`CompileRequest`はtext snapshot、document ID／revision、driver、compile option、resource root、
+voice／PCM／rhythmの明示的な解決結果を持つ。`CompileResult`はstatus、driver、構造化diagnostic、
+transcriptと`CompiledSong`を返す。
+
+`CompiledSong`は完全なMUB byte列、driver、max count、tag、source revision、resource情報、
+artifact hashを所有する。一時file経由ではなく、`CMucom`内部の`CMemBuf`から
+`std::vector<uint8_t>`へcopyする内部APIを追加する。runtimeを破棄した後も`CompiledSong`を
+再生、export、検査で使用できることを保証する。
+
+diagnosticはmessage textへの`sscanf`だけに依存せず、compilerが検出したmessage IDと行番号を
+runtime adapterで構造化する。legacy runtimeへの再入を避けるため、当面は1本のserial compile queueで
+実行する。
+
+### `PlaybackSession`とGUI用audio engine
+
+application全体で`PlaybackCoordinator`を1つだけ作成し、documentは`CompiledSong`と再生optionを
+渡す。状態遷移は次の通りとする。
+
+```text
+Idle -> Preparing -> Buffering -> Playing <-> Paused
+                                  |
+                                  +-> Draining -> Finished -> Idle
+                                  +-> Stopping -> Idle
+                                  +-> DeviceLost / Failed
+```
+
+- `Pause`は`CMucom::Stop`を呼ぶがruntimeとsongを保持する
+- `Resume`は`CMucom::Restart`を呼び、pause前の位置から再開する
+- `Stop`はaudio bufferをflushし、runtimeとsongを破棄する
+- 別documentの`Play`は旧sessionをstopし、bufferをflushして`SessionId`を更新する
+- 旧`SessionId`から届いたstate、progress、monitor callbackは破棄する
+- 早送り倍率は`x1`、`x2`、`x4`、`x6`、`x8`、`x10`に制限する。`x1`はFASTFW解除、それ以外は
+  倍率設定後にFASTFWを有効化する
+
+GUI再生では`CMucom`を`MUCOM_OPTION_STEP`で初期化する。専用playback workerがcommandを処理し、
+`RenderAudio`で一定frameを生成してSDL ring bufferへ書き、同じthreadでmonitor snapshotを生成する。
+SDL audio callbackはring bufferの消費だけを行い、VMやZ80に触れない。CLIの既存realtime経路は
+変更せず併存させる。
+
+#### 曲末判定
+
+`MUCOM_STATUS_COUNT >= MUCOM_STATUS_MAXCOUNT`は曲末判定に使用しない。`COUNT`はmax countで
+剩余を取り、loop曲を誤停止するためである。
+
+実装前に、loopなし短曲、明示loop曲、一部channelだけ先に終了する曲、PCM曲、空channelを
+含む曲をMUCOM88 1.7、1.5、EMで動かし、tickごとのchannel終端flagをcharacterization testで
+固定する。その結果からdriver別の`PlaybackTerminationState`を実装する。
+
+- loopなし曲は全有効channelの終了を1回だけ通知する
+- loop曲は`Finished`にせず、loop境界とloop回数を通知する
+- driver終端検出後、既にring bufferにある音声が排出された時点を`Finished`とする
+- Windows automatic playerの時間／曲長割合によるskipはPhase 5のpolicyとし、自然終了と分離する
+
+### `MonitorSnapshot`
+
+`PCHDATA`はUIへ渡さず、playback workerで11 channelを一括copyする。channel値はA～Kの識別子、
+mute、voice番号、volume、detune、data address、note／key-on、LFO、reverb、pan、quantizeを持つ。
+全体値は`SessionId`、playback state、driver、absolute interrupt count、current count、max count、
+loop count、underrun、dropped sampleを持つ。
+
+snapshotは不変値として公開し、UIは15～30 Hzで最新snapshotだけを取得する。callback内で
+AppKit描画完了を待たず、audio callbackやplayback workerをblockしない。
+
+### `AudioDeviceService`
+
+次の責務をplayback runtimeから分離する。
+
+- output device列挙、default device表現、device選択とopen
+- requested／obtained formatの報告
+- device切断通知、再列挙、明示的な再接続
+- underrun、dropped sample、bufferの診断値
+
+SDL2のdevice indexは永続IDとして保存せず、列挙generation内だけ有効とする。設定には
+device名とdefault選択を保存し、起動時に再解決する。安定したmacOS固有IDが必要になった場合は
+CoreAudio UID backendを追加する。
+
+Phase 2では44.1 kHz、signed 16 bit、stereoを取得できない場合に構造化した
+`UnsupportedFormat`を返す。暗黙のformat変換は行わず、必要な場合はPhase 4で変換処理を追加する。
+device切断時に別deviceへ無断で切り替えず、sessionを`DeviceLost`へ遷移させて明示的な再接続を行う。
+
+### `ExportService`
+
+PlaybackSessionとruntimeを共有せず、export operationごとにstep mode runtimeを所有する。
+
+- MUBは`CompiledSong`のbyte列をatomic saveする
+- WAV／VGM／S98は同一directoryの一時fileへ一定frameずつrenderする
+- 各chunk間でcancelを確認し、生成sample数からprogressを通知する
+- writerを明示closeした後だけ完成file名へrenameする
+- cancelまたはerror時は一時fileを削除する
+- 生成物を既存の独立parserで検査し、構造不正時は完成扱いにしない
+
+既存の`CMucom::Record(seconds)`は同期loopでprogressとcancelを挿入できないため、ExportServiceから
+直接使用せずchunk単位のrenderへ分解する。
+
+### `VoiceService`
+
+compiler依存のbit-field配置を持つ`MUCOM88_VOICEFORMAT`をUI境界へ出さない。次の正規化した
+値型と256音色の`VoiceBank`を作る。
+
+- operatorごとのDT、ML、TL、KS、AR、DR、SR、SL、RR、AM
+- AL、FB、6文字名、voice番号
+- 元bank、編集中bank、revision、dirty state
+
+load、field範囲のvalidate、undo用copy、atomic save、8192 byte round tripをserviceの責務にする。
+compileまたはplaybackへ適用する時だけ内部形式へserializeする。試聴はVoiceServiceがaudio deviceを
+開かず、`PlaybackCoordinator`へ`VoicePreviewRequest`を送り、通常再生との排他を同じ場所で管理する。
+
+### 実装順序と各段階の完了gate
+
+| 段階 | 実施内容 | 完了gate |
+|---|---|---|
+| 2-0 | 曲末、pause／resume、channel flagのcharacterization test | 1.7、1.5、EMの差を固定 |
+| 2-1 | 共通値型、operation ID、cancel、dispatcher、error | stale結果、cancel、callback回数の単体試験 |
+| 2-2 | `DocumentService`完成 | encoding round trip、atomic save、外部変更、recovery試験 |
+| 2-3 | `CompileService`の純粋化とowned MUB | runtime破棄後のMUB再読込・再生 |
+| 2-4 | `AudioDeviceService`とfake audio output | 列挙、open失敗、切断、再接続試験 |
+| 2-5 | step mode `PlaybackSession`と状態機械 | play、pause、resume、stop、早送り、曲末試験 |
+| 2-6 | `MonitorSnapshot` | 11 channel mapping、古いsessionの破棄、thread raceなし |
+| 2-7 | `ExportService` | 4形式、progress、cancel、partial file削除 |
+| 2-8 | `VoiceService` | 256音色、8192 byte round trip、全field境界値試験 |
+| 2-9 | AppKitのservice経由化 | main thread compileなし、複数documentのaudio競合なし |
+
+2-0と2-1を先行し、2-2と2-3でdocument snapshotから`CompiledSong`までの不変data flowを
+完成させる。その後に2-4と2-5を実施し、audio所有権とplayback threadを固定してから
+monitor、export、voice、AppKitの順に接続する。
+
+### Phase 2で追加する常設試験
+
+- `document_service_test`: encoding、改行、atomic save、外部変更、recovery
+- `compile_service_test`: snapshot compile、driver／resource解決、diagnostic、owned MUB
+- `operation_lifecycle_test`: cancel、stale revision、completion回数、document close
+- `playback_session_test`: fake clock／fake audioで状態遷移、早送り、active session切替
+- `playback_end_detection_test`: 3 driverの有限曲、loop曲、PCM曲
+- `monitor_snapshot_test`: 11 channel変換、count、session ID、snapshot不変性
+- `audio_device_service_test`: SDL dummyのopen／close、format error、切断／再接続mock
+- `export_service_test`: MUB／WAV／VGM／S98、progress、cancel、生成物の独立構造検査
+- `voice_service_test`: 8192 byte round trip、field範囲、dirty state、atomic save
+- `app_service_lifetime_test`: shutdown順序、callback破棄、use-after-free防止
+
+既存のPhase 1試験7件を残し、Phase 2試験もRelease、Debug、ASan／UBSan、TSanで実行する。
+実CoreAudio deviceの60分連続再生と聴感試験はPhase 4の完了条件とし、Phase 2の自動試験と分離する。
+
+### Phase 2完了条件
+
+- AppKitから`cmucom.h`、`mucomvm.h`、`PCHDATA`、`MUCOM88_VOICEFORMAT`が見えない
+- compile結果がruntime寿命から独立した`CompiledSong`になっている
+- compile、playback、exportがAppKit main threadをblockしない
+- application内のaudio outputが常に1つで、active session切替規則が自動試験されている
+- playback runtimeを変更するthreadが1つに限定されている
+- 全非同期処理にoperation ID、revision、cancelがある
+- document、compile、playback、export、monitor、voice、audio deviceの単体試験がある
+- 旧session、古いdocument revision、破棄済みUIへのcallbackが無視される
+- service実装がprocess current directoryを変更しない
+- CLIとPhase 1の常設回帰試験が引き続き成功する
+- 未完了の実device長時間試験とGUI操作試験がPhase 3／4の項目として明確に分離されている
+
 ## Phase 3: MML editor完成
 
 - [x] 新規作成、開く、UTF-8保存、別名保存、標準dirty確認
@@ -423,3 +667,4 @@ Windows CLI比較は先行条件にしない。
 | 2026-09-23 | 方針再構築 | Windows runtime／生成物互換を完了条件から除外し、GUI機能同等化とmacOS native受入へ変更 | 53項目を標準版49、拡張profile 2、除外2へ再分類。VMとWindows goldenをrelease gateから除外 |
 | 2026-09-23 | Phase 0完了 | 全53機能の受入手順、実chip／外部driverのprovider契約、release note雛形を確定 | 受入仕様の件数検査（標準49、拡張2、除外2）と3文書の差分検査を実施 |
 | 2026-09-23 | Phase 1完了 | CTestを7件へ拡張し、native artifact、CLI契約、encoding、SDL audio、sanitizer回帰を常設化 | Release／Debug／ASan+UBSan／TSanで全7件成功。VGM wait不整合、fmgen UB、SDL終了raceも修正 |
+| 2026-09-23 | Phase 2計画具体化 | owned MUB、単一playback worker、application単位のaudio所有を軸にservice契約、実装順序、完了gateを確定 | 現行の`CMucom`、compile service、AppKit editor、SDL backend、Windows HSP再生／monitor仕様を照合 |
