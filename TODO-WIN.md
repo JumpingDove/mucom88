@@ -519,7 +519,7 @@ monitor、export、voice、AppKitの順に接続する。
 
 - [x] 新規作成、開く、UTF-8保存、別名保存、標準dirty確認
 - [-] compile結果と先頭error行の表示
-- [x] UTF-8、CP932、Shift_JISの判定と元encodingへのround trip
+- [-] UTF-8、CP932、Shift_JISの判定と元encodingへのround trip
 - [ ] 行番号gutter、検索、置換、指定行移動
 - [ ] MUC、N88-BASIC source、任意textのtype判定
 - [ ] drag and drop、最近使ったfile、複数document
@@ -528,8 +528,185 @@ monitor、export、voice、AppKitの順に接続する。
 - [ ] Finder関連付けとUTI
 - [ ] sandbox採用時のsecurity-scoped bookmark
 
-完了条件: 日本語を含む既存MMLを無損失で開き、編集、保存、再openでき、compile errorから該当行へ
-移動できる。
+encodingは一般的なUTF-8／CP932文書のround tripまで実装済みである。ただしCP932はShift_JISの
+大部分を包含するため、現在の「CP932変換を先に試す」実装では両者を厳密に自動判別できない。
+また、最初に見つけた改行形式へ文書全体を正規化するため、混在改行の保持は未完了である。
+このため、明示的なencoding選択と混在改行の扱いが完成するまで一部完了とする。
+
+### Phase 3の実装原則
+
+- AppKitの`NSDocument`をfile coordination、safe save、window、最近使ったfileの入口とする
+- `DocumentService`をtext、encoding、改行、document type、revision、dirty状態の唯一のmodelとする
+- `MmlDocument`を独立したproduction modelとして残さず、`DocumentService`の互換wrapperにするか利用側を移行する
+- AppKitのUTF-16 indexとcoreのUTF-8 byte offsetを直接混在させず、行・文字位置変換を一箇所へ集約する
+- compile、recovery書込等の重い処理はmain threadで実行せず、結果はdocument IDとrevisionを照合して反映する
+- Phase 3ではeditorを完成させ、再生、停止、早送り、audio device操作はPhase 4に残す
+
+### 3-0: document状態と保存処理の一元化
+
+現状のAppKit保存は`DocumentService::EncodedData()`から得たdataを`NSDocument`へ渡すが、
+`DocumentService::SaveAs()`を通らない。このため保存成功後もservice側の保存済みrevision、path、
+resource directory、encoding推定状態、file fingerprintが更新されない。autosave、外部更新検出、
+crash recoveryを追加する前に次のcontractへ変更する。
+
+- `PrepareSave`は保存先、encoding、対象revision、書込byte列、content IDを持つ`SavePlan`を返す
+- `NSDocument`は`SavePlan`を使い、標準のsafe save／file coordinationで書き込む
+- 書込成功後だけ`AcknowledgeSave`を呼び、path、resource directory、encoding、fingerprintを更新する
+- 保存中に追加編集された場合、保存対象revisionだけを記録し、現在内容はdirtyのままにする
+- open、Save As、Finder上のrename後は`AssociateLocation`でserviceのlocationを同期する
+- `DocumentSnapshot::IsModified()`はrevisionの単純比較だけに依存せず、現在content IDと保存済みcontent IDを
+  比較する。revisionは非同期結果のstale判定用に単調増加を維持する
+- Undoで保存時と同じ内容へ戻った場合はcleanへ戻り、Redoで再びdirtyになることを試験する
+- 将来のFM音色変更はdirty contributorとして追加できる境界だけを用意し、音色editor自体はPhase 7で実装する
+
+### 3-1: encoding、改行、document type
+
+`DocumentSnapshot`へ`DocumentKind`、encoding判定の信頼度、必要な場合は元byte列と行単位の改行情報を追加する。
+
+- `DocumentKind`は`Muc`、`N88Basic`、`PlainText`の3値とする
+- type判定はUTI、拡張子、内容の順に行い、確定できない有効textは`PlainText`へfallbackする
+- N88 sourceはopen時に行番号を除去せず、そのまま編集、保存、compileする。行番号除去はPhase 6のtoolとする
+- BOM付きUTF-8とstrict UTF-8は確定判定する
+- CP932／Shift_JISの曖昧な入力はCP932をdefault推定値とし、status表示とEncoding menuで明示変更できるようにする
+- 未編集状態でencodingを変更する場合は元byte列から再decodeし、編集後は保存encodingの変更として扱う
+- 元encodingで表現不能な文字を暗黙置換せず、UTF-8で別名保存するか取消する
+- 改行は`LF`、`CRLF`、`CR`、`Mixed`を区別し、未編集行の改行を保持する。新規行は文書の優先改行を使う
+- 未知encoding、embedded NUL、binary dataは理由を示して拒否し、replacement文字でcompile dataを変更しない
+
+### 3-2: compile diagnosticとsource位置移動
+
+raw transcriptだけでなく構造化diagnosticを一覧表示し、選択したerrorへ移動できるようにする。
+
+- `CompileDiagnostic`はseverity、code、line、optional column、messageを持つ
+- legacy compilerがcolumnを返さない場合は未設定とし、推測したcolumnを表示しない
+- message領域をcompile概要、diagnostic一覧、raw transcriptに分ける
+- diagnosticの選択またはdouble clickで該当する論理行へ移動し、一時的に強調表示する
+- UTF-8 byte位置を`NSRange`へ直接渡さず、`NSString`のUTF-16 indexへ変換する
+- compile開始時のdocument ID／revisionと現在値が異なる結果は表示しない
+- 複数diagnostic、行番号なしerror、範囲外行番号、空文書を試験する
+
+### 3-3: 行番号、検索、置換、指定行移動
+
+行番号は第二の`NSTextView`ではなく`NSRulerView` subclassで実装し、editorのlayout managerと同じ
+表示情報を利用する。
+
+- platform-neutralな`EditorLineModel`が論理行の開始位置を管理する
+- rulerはvisible glyph rangeだけを描画し、折返し行へ同じ番号を重複表示しない
+- 空の最終行、CRLF、CR、日本語、結合文字を正しく数える
+- cursorを含む論理行を強調し、text変更、scroll、font変更、resizeで必要範囲を再描画する
+- 大規模file向けに行頭offsetをcacheし、scrollごとの全文走査を避ける
+- 検索と置換は`NSTextView`／`NSTextFinder`の標準find barを使用する
+- `Command-F`、`Command-G`、`Shift-Command-G`を標準動作へ接続する
+- 指定行移動は独自sheetとし、同じ`EditorLineModel`で選択範囲を求める
+
+### 3-4: drag and drop、最近使ったfile、複数document
+
+すべてのfile openを`NSDocumentController`経由へ統一する。
+
+- File menuへOpen RecentとClear Menu、main menuへWindow menuを追加する
+- Finderから複数fileをdropした場合は各fileを別documentで開く
+- dropによって現在のdirty documentを置換しない
+- text payloadのdropは通常のtext挿入として扱い、file URLとは区別する
+- 各documentがcompile operationとUI状態を所有し、別documentの開始・終了で誤cancelしない
+- compile serviceのserial queueは共有してよいが、callbackはdocument ID／revisionで分離する
+- untitledを含む2文書以上でopen、編集、Save As、compile、close確認を反復する
+
+### 3-5: autosave、世代backup、crash recovery
+
+Phase 3のautosaveは元fileを無断で上書きする機能ではなく、異常終了復旧用snapshotとする。
+`RecoveryService`を`DocumentService`から分離し、testでは保存rootを一時directoryへ差し替えられるようにする。
+
+- Application Support配下のdocument固有UUID directoryへrecoveryを保存する
+- 編集停止から5秒後を目安にdebounceし、dirtyな最新snapshotだけをworkerで保存する
+- recoveryはschema version、timestamp、元pathとfingerprint、encoding、改行、document type、revision、
+  content checksumを持つ
+- atomic writeし、documentごとに最大10世代を保持して古い世代を削除する
+- 正常保存または明示的な破棄でrecoveryを削除し、crash時は残す
+- 起動時に候補をscanし、復元、破棄、後で確認を選択できるようにする
+- 復元内容はdirtyなuntitled documentとして開き、元fileを直ちに上書きしない
+- manual saveで既存fileを置換する前にApplication Support配下へ世代backupを作成する
+- 破損checksum、途中で切れたfile、元fileの外部更新、保存中の追加編集、世代上限を自動試験する
+
+### 3-6: commandとshortcut
+
+menu itemから直接処理を分岐させず、`EditorCommand`とcommand dispatcherを定義し、menu、button、
+keyboardの全経路を同じcommandへ接続する。`validateUserInterfaceItem`で実行可能状態を同期する。
+
+- macOS標準として`Command-N/O/S/Shift-S/W/Z/Shift-Z/F/G/Shift-G`を提供する
+- compileは`Command-R`、指定行移動は`Command-L`とする
+- Windows互換の`Control-S`は保存へ割り当てる
+- Windows版のF5／F12はcompile後の再生、Escは停止、Control-F1は早送りであるため、Phase 3で
+  compile-only等の異なる意味へ割り当てない
+- F5／F12、Esc、Control-F1はcommand定義だけを先行できるが、有効化と受入はPhase 4で行う
+- F1のmenu遷移はmacOSの常設menuで目的を達成するため、同一操作の再現を要求しない
+
+### 3-7: Finder、UTI、sandbox方針
+
+- `org.mucom88.muc`はEditor／Ownerとして維持する
+- `.n88`用の`org.mucom88.n88`を`public.plain-text`準拠のtypeとして追加する
+- 任意textは`public.plain-text`をEditor／Alternateとして扱い、全text fileの既定appを奪わない
+- Open panelではMUC、N88、plain text、All Filesを選択可能にする
+- `plutil`、`mdls`、Launch Services登録、Finder double click、複数file openで確認する
+- 現在の非sandbox buildではsecurity-scoped bookmarkは不要なため、Phase 3では「sandbox非採用につきN/A」とする
+- 将来sandboxを採用する場合はdocument外のPCM、voice、ROM、rhythm directoryだけをbookmark化し、
+  stale bookmark更新とaccess開始／終了を対にする
+
+### Phase 3のfile分割方針
+
+単一の`mucom_editor.mm`へ機能を追加し続けず、次の単位へ分離する。
+
+| 層 | 実装単位 | 責務 |
+|---|---|---|
+| core | `DocumentService` | text、encoding、改行、type、save plan、dirty状態 |
+| core | `EditorLineModel` | 論理行、行頭位置、指定行移動 |
+| core | `RecoveryService` | recovery／backupの保存、世代管理、scan、cleanup |
+| core | `EditorCommand` | command ID、実行可否、dispatch contract |
+| AppKit | `MucomDocument` | `NSDocument` lifecycleとcore modelの同期 |
+| AppKit | `MucomEditorWindowController` | editor、status、message layout |
+| AppKit | `LineNumberRulerView` | visible行番号とcursor行表示 |
+| AppKit | `DiagnosticController` | diagnostic一覧とsource位置移動 |
+
+### Phase 3の実装順序と完了gate
+
+| 段階 | 実施内容 | 完了gate |
+|---|---|---|
+| 3-0 | save acknowledgement、dirty／Undo、location同期、旧document model統合 | save中の追加編集、Undo、Save As、外部更新の試験が成功 |
+| 3-1 | encoding選択、混在改行、MUC／N88／text判定 | 日本語・混在改行・3 typeのround tripが成功 |
+| 3-2 | diagnostic一覧と任意error行移動 | 複数error、stale revision、Unicode行移動が成功 |
+| 3-3 | gutter、find／replace、Go to Line | 折返し、最終空行、大規模fileで表示と移動が一致 |
+| 3-4 | Open Recent、drop、複数document | dirty文書を失わず複数windowを独立操作できる |
+| 3-5 | recovery autosave、10世代backup、起動時復旧 | crash相当、破損、cleanup、復元の試験が成功 |
+| 3-6 | command router、macOS／互換shortcut | menuとkeyboardが同じcommandを実行する |
+| 3-7 | UTI、Finder、sandbox判定、最終受入 | MUC／N88をFinderから開き、全Phase 3受入項目がPASS |
+
+3-0を完了するまでrecoveryと複数documentを実装しない。3-1と3-2でmodel contractを固定した後に
+AppKit表示を追加し、最後にFinder／Launch Servicesを含むapp bundle統合を検証する。
+
+### Phase 3で追加する常設試験
+
+- `document_service_test`: save acknowledgement、dirty／Undo相当、encoding指定、混在改行、type、外部更新
+- `editor_line_model_test`: LF／CRLF／CR／Mixed、日本語、結合文字、折返し元の論理行、最終空行
+- `editor_command_test`: menu／keyboard dispatch、実行可否、Phase 4 commandの無効状態
+- `document_recovery_test`: debounce対象snapshot、世代上限、checksum、scan、restore、cleanup
+- `compile_service_test`: 複数diagnostic、optional column、document ID／revision
+- macOS GUI手動試験: find／replace、ruler、drop、Open Recent、複数window、Finder関連付け、起動時復旧
+
+core testは既存と同様にDebug、Release、ASan／UBSan、TSanで実行する。AppKit固有表示とFinder／
+Launch Servicesは自動試験だけで完了扱いにせず、`tests/manual/macos-gui-acceptance.md`へ結果を記録する。
+
+### Phase 3完了条件
+
+- UTF-8、UTF-8 BOM、CP932、Shift_JISの日本語文書を明示したencodingで開き、編集、保存、再openして
+  文字と改行を失わない
+- 曖昧なlegacy encodingを推定と表示し、利用者が明示変更できる
+- MUC、N88、plain textを区別し、N88を暗黙変換しない
+- compileの全diagnosticを表示し、選択したerrorの論理行へ移動できる
+- gutter、検索、置換、指定行移動がUnicodeと折返しを含む文書で正しく動作する
+- drop、Open Recent、複数documentでdirty内容と非同期結果が混線しない
+- 異常終了後に最新の正常なrecovery世代を元fileへ上書きせず復元できる
+- MUC／N88をFinderから開け、任意textの既定appを不必要に変更しない
+- sandbox非採用ならbookmark項目を理由付きN/Aとし、採用する場合だけsecurity-scoped bookmarkを試験する
+- CLI、Phase 1、Phase 2の全常設試験が引き続き成功する
 
 ## Phase 4: 再生GUIとAudio
 
@@ -673,3 +850,4 @@ VM導入、Windows CLI比較は先行条件にしない。
 | 2026-09-23 | Phase 2計画具体化 | owned MUB、単一playback worker、application単位のaudio所有を軸にservice契約、実装順序、完了gateを確定 | 現行の`CMucom`、compile service、AppKit editor、SDL backend、Windows HSP再生／monitor仕様を照合 |
 | 2026-09-23 | Phase 2完了 | document、owned MUB compile、単一worker再生、audio、monitor、4形式export、voice、application共有serviceを実装し、AppKit compileを非同期service経由化 | Phase 2試験10件を追加し、既存7件を含む全17件がDebug／Release／ASan+UBSan／TSanで成功 |
 | 2026-09-23 | Makefile依存修正 | `miniplay`で旧・新class layoutのobjectが混在してmutex例外になる問題を防止 | `.d`自動生成、Makefile変更時の全object再build、SDL dummy／実deviceで`sampl1.muc`再生開始とCtrl-C終了を確認 |
+| 2026-09-23 | Phase 3計画具体化 | document保存状態の一元化を先行し、encoding、diagnostic、editor操作、複数document、recovery、shortcut、UTIの実装方法と順序を確定 | AppKit editor、DocumentService、compile diagnostic、recovery形式、Info.plist、Windows shortcut、GUI受入仕様を照合 |

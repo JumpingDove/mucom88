@@ -35,13 +35,13 @@ tester=
 | ID | Scope | 予定自動試験 | 手動操作と期待結果 |
 |---|---|---|---|
 | `GUI-EDIT-01` | standard | `document_service_test`: UTF-8／CP932／Shift_JIS round trip | 日本語MUCを編集、保存、再openして文字と改行が失われない |
-| `GUI-EDIT-02` | standard | `compile_service_test`: diagnosticの行、column、message | compile結果を表示し、error行へ移動できる |
+| `GUI-EDIT-02` | standard | `compile_service_test`: diagnosticの行、optional column、message | compile結果と全diagnosticを表示し、選択したerror行へ移動できる。compilerがcolumnを返さない場合は未設定とする |
 | `GUI-EDIT-03` | standard | `editor_line_model_test`: 改行とUnicodeの論理行 | cursorと折返しに追従して正しい行番号を表示する |
 | `GUI-EDIT-04` | standard | `document_service_test`: new/open/save/save-as | menu操作、上書き確認、title更新が正しい |
-| `GUI-EDIT-05` | standard | `document_service_test`: MUC、N88、任意text判定 | filterが働き、未知encodingを明示確認する |
+| `GUI-EDIT-05` | standard | `document_service_test`: MUC、N88、任意text判定 | filterが働き、CP932／Shift_JISの曖昧判定と未知encodingを明示確認する |
 | `GUI-EDIT-06` | standard | `document_service_test`: dirty状態遷移 | MML／voice変更を表示し、変更を無断破棄しない |
 | `GUI-EDIT-07` | standard | `document_service_test`: URLとtitle | open、save-as、rename後にtitleを更新する |
-| `GUI-EDIT-08` | standard | `editor_command_test`: command dispatch | menuとkeyboardの双方でsave、compile、stopを実行する |
+| `GUI-EDIT-08` | standard | `editor_command_test`: command dispatch | menuとkeyboardの双方でsave、compileを実行する。F5／F12、Esc等の再生commandはPhase 4で有効化する |
 | `GUI-EDIT-09` | standard | `document_service_test`: close判断 | close／終了時に保存、破棄、取消が働く |
 
 ## Compile・再生
