@@ -48,7 +48,9 @@ COMMON_FLAGS = -O0 -g -Wall
 OBJS_DIR = objs_d
 endif
 
-.PHONY: all test makedir $(OBJS_DIR)
+COMMON_FLAGS += -MMD -MP
+
+.PHONY: all test mini tool makedir clean $(OBJS_DIR)
 
 all: makedir $(TARGET)
 test: makedir $(TARGET_DEPTEST) $(TARGET_MODTEST)
@@ -199,6 +201,15 @@ MINIPLAY_OBJS = $(addprefix $(OBJS_DIR)/,$(addsuffix .o,$(MINIPLAY_SRCS_BASE)))
 PCMTOOL_SRCS_BASE = $(basename $(PCMTOOL_SRCS))
 PCMTOOL_OBJS = $(addprefix $(OBJS_DIR)/,$(addsuffix .o,$(PCMTOOL_SRCS_BASE)))
 
+# Track transitive header dependencies. This is required for classes whose
+# size is defined in a header: mixing an old allocator object with a newly
+# compiled implementation can otherwise corrupt members such as std::mutex.
+DEPFILES = $(OBJS:.o=.d) $(MAIN_OBJS:.o=.d) $(MOD_OBJS:.o=.d)
+DEPFILES += $(MODTEST_OBJS:.o=.d) $(DEPTEST_OBJS:.o=.d)
+DEPFILES += $(MINIPLAY_OBJS:.o=.d) $(PCMTOOL_OBJS:.o=.d)
+
+-include $(DEPFILES)
+
 INCLUDES += -I. $(addprefix -I,$(DIRS) )
 
 
@@ -234,10 +245,10 @@ makedir :
 mucomerror_utf8.cpp :
 	iconv -f cp932 -t utf8 mucomerror.cpp > $@ 
 
-$(OBJS_DIR)/%.o : %.cpp
+$(OBJS_DIR)/%.o : %.cpp Makefile Makefile.setting
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
-$(OBJS_DIR)/%.o : %.c
+$(OBJS_DIR)/%.o : %.c Makefile Makefile.setting
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 clean :

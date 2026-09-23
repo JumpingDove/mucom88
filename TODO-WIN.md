@@ -672,3 +672,4 @@ VM導入、Windows CLI比較は先行条件にしない。
 | 2026-09-23 | Phase 1完了 | CTestを7件へ拡張し、native artifact、CLI契約、encoding、SDL audio、sanitizer回帰を常設化 | Release／Debug／ASan+UBSan／TSanで全7件成功。VGM wait不整合、fmgen UB、SDL終了raceも修正 |
 | 2026-09-23 | Phase 2計画具体化 | owned MUB、単一playback worker、application単位のaudio所有を軸にservice契約、実装順序、完了gateを確定 | 現行の`CMucom`、compile service、AppKit editor、SDL backend、Windows HSP再生／monitor仕様を照合 |
 | 2026-09-23 | Phase 2完了 | document、owned MUB compile、単一worker再生、audio、monitor、4形式export、voice、application共有serviceを実装し、AppKit compileを非同期service経由化 | Phase 2試験10件を追加し、既存7件を含む全17件がDebug／Release／ASan+UBSan／TSanで成功 |
+| 2026-09-23 | Makefile依存修正 | `miniplay`で旧・新class layoutのobjectが混在してmutex例外になる問題を防止 | `.d`自動生成、Makefile変更時の全object再build、SDL dummy／実deviceで`sampl1.muc`再生開始とCtrl-C終了を確認 |

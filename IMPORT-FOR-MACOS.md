@@ -942,6 +942,12 @@ MakefileはCLIと`miniplay`の補助入口として残している。新しい`M
 `MucomCompileService`、`editor_core_test`はCMake targetで管理しているため、editor基盤を含む
 正式な検証にはCMakeを使用する。
 
+Makefile buildは`-MMD -MP`で各objectのheader依存を`objs/**/*.d`へ記録する。さらにobjectは
+`Makefile`と`Makefile.setting`にも依存するため、build optionまたは依存生成方式を変更した直後は
+自動的に再buildされる。これにより、classへ`std::mutex`等を追加した後に旧class sizeでcompileされた
+`mucomvm.o`と新しい`osdep_sdl.o`が混在することを防ぐ。過去のbuild生成物を持つ環境で問題を切り分ける
+場合は、`make clean && make mini`で完全再buildできる。
+
 ### 13.5 最小動作確認
 
 以下はrepository top directoryで、CMake buildのexecutableを使う例である。Makefile buildでは
