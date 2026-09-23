@@ -20,6 +20,59 @@ mucom88_add_test_executable(editor_core_test editor_core_test.cpp)
 add_test(NAME editor_core_test COMMAND editor_core_test)
 mucom88_set_test_properties(editor_core_test 30)
 
+mucom88_add_test_executable(document_service_test test_document_service.cpp)
+add_test(NAME document_service_test COMMAND document_service_test)
+mucom88_set_test_properties(document_service_test 30)
+
+mucom88_add_test_executable(voice_service_test test_voice_service.cpp)
+add_test(NAME voice_service_test COMMAND voice_service_test)
+mucom88_set_test_properties(voice_service_test 30)
+
+mucom88_add_test_executable(compile_service_test test_compile_service.cpp)
+add_test(NAME compile_service_test COMMAND compile_service_test)
+mucom88_set_test_properties(compile_service_test 30)
+
+mucom88_add_test_executable(operation_lifecycle_test test_operation_lifecycle.cpp)
+add_test(NAME operation_lifecycle_test COMMAND operation_lifecycle_test)
+mucom88_set_test_properties(operation_lifecycle_test 30)
+
+mucom88_add_test_executable(playback_session_test test_playback_service.cpp)
+add_test(NAME playback_session_test COMMAND playback_session_test)
+mucom88_set_test_properties(playback_session_test 30)
+set_tests_properties(playback_session_test PROPERTIES
+    ENVIRONMENT "SDL_AUDIODRIVER=dummy")
+
+mucom88_add_test_executable(playback_end_detection_test
+    test_playback_end_detection.cpp)
+add_test(NAME playback_end_detection_test COMMAND playback_end_detection_test)
+mucom88_set_test_properties(playback_end_detection_test 45)
+set_tests_properties(playback_end_detection_test PROPERTIES
+    ENVIRONMENT "SDL_AUDIODRIVER=dummy")
+
+mucom88_add_test_executable(monitor_snapshot_test test_monitor_snapshot.cpp)
+add_test(NAME monitor_snapshot_test COMMAND monitor_snapshot_test)
+mucom88_set_test_properties(monitor_snapshot_test 30)
+set_tests_properties(monitor_snapshot_test PROPERTIES
+    ENVIRONMENT "SDL_AUDIODRIVER=dummy")
+
+mucom88_add_test_executable(audio_device_service_test
+    test_audio_device_service.cpp)
+add_test(NAME audio_device_service_test COMMAND audio_device_service_test)
+mucom88_set_test_properties(audio_device_service_test 30)
+set_tests_properties(audio_device_service_test PROPERTIES
+    ENVIRONMENT "SDL_AUDIODRIVER=dummy")
+
+mucom88_add_test_executable(export_service_test test_export_service.cpp)
+add_test(NAME export_service_test COMMAND export_service_test)
+mucom88_set_test_properties(export_service_test 60)
+
+mucom88_add_test_executable(app_service_lifetime_test
+    test_app_service_lifetime.cpp)
+add_test(NAME app_service_lifetime_test COMMAND app_service_lifetime_test)
+mucom88_set_test_properties(app_service_lifetime_test 30)
+set_tests_properties(app_service_lifetime_test PROPERTIES
+    ENVIRONMENT "SDL_AUDIODRIVER=dummy")
+
 mucom88_add_test_executable(mub_validation_test test_mub.cpp)
 add_test(NAME mub_validation_test COMMAND mub_validation_test)
 mucom88_set_test_properties(mub_validation_test 15)

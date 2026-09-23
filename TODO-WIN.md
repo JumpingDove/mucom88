@@ -51,8 +51,8 @@ WAV、VGM、S98はWindows版との一致を保証しないが、それぞれのf
 
 | レベル | 対象 | 現状 |
 |---|---|---|
-| Level 1 | CLI compile、再生、MUB/WAV/VGM/S98出力 | 基本経路とmacOS native常設回帰試験7件を実装済み |
-| Level 2 | MML editor、compile、再生、browser、export | 編集・保存・compileまで一部実装。再生以降は未完了 |
+| Level 1 | CLI compile、再生、MUB/WAV/VGM/S98出力 | 基本経路とmacOS native常設回帰試験17件を実装済み |
+| Level 2 | MML editor、compile、再生、browser、export | editorの編集・保存・非同期compileとPhase 2 core serviceを実装。再生等のUI接続は未完了 |
 | Level 3 | player、monitor、PCM tool、FM音色editor、CoreMIDI | 未着手または旧Makefile targetのみ |
 | Level 4 | 署名済み配布、更新、共有、外部provider | 未着手。実chipは拡張profile |
 
@@ -143,7 +143,7 @@ CTest、release受入試験からは呼び出さない。
 
 ### Editor・document
 
-- [-] `GUI-EDIT-01` 複数行MML editorと日本語encoding round trip
+- [x] `GUI-EDIT-01` 複数行MML editorと日本語encoding round trip
 - [-] `GUI-EDIT-02` compile結果・error message pane
 - [ ] `GUI-EDIT-03` cursor位置に追従する行番号表示
 - [x] `GUI-EDIT-04` New、Open、Save、Save As、上書き確認
@@ -252,17 +252,17 @@ macOS native baselineには入力hash、artifactの構造値とhash、macOS、cl
 
 ## Phase 2: Core APIとapplication境界
 
-- [-] `DocumentService`: encoding、読込、保存、autosave、recovery
-- [-] `CompileService`: text snapshot、driver、resource解決、構造化diagnostic
-- [ ] `PlaybackSession`: play、pause、resume、stop、早送り、曲末尾、progress
-- [ ] `ExportService`: MUB、WAV、VGM、S98、progress、cancel、error
-- [ ] `MonitorSnapshot`: 11 channelとinterrupt／count状態
-- [ ] `VoiceService`: voice bankの読込、編集、保存、試聴
-- [ ] audio device列挙、選択、切断、再接続を行う`AudioDeviceService`
-- [ ] 全serviceでobject寿命、thread、callback、memory所有権を明文化する
-- [ ] C++例外、内部pointer、`CMucom`／`mucomvm`をUI境界へ公開しない
-- [ ] operation IDとcancelを導入し、古い非同期結果が新しいdocument状態を上書きしないようにする
-- [ ] service単体試験を追加する
+- [x] `DocumentService`: encoding、読込、保存、autosave data、recovery
+- [x] `CompileService`: text snapshot、driver、resource解決、構造化diagnostic
+- [x] `PlaybackSession`: play、pause、resume、stop、早送り、曲末尾、progress
+- [x] `ExportService`: MUB、WAV、VGM、S98、progress、cancel、error
+- [x] `MonitorSnapshot`: 11 channelとinterrupt／count状態
+- [x] `VoiceService`: voice bankの読込、編集、保存、試聴request
+- [x] audio device列挙、選択、切断、再接続を行う`AudioDeviceService`
+- [x] 全serviceでobject寿命、thread、callback、memory所有権を明文化する
+- [x] C++例外、内部pointer、`CMucom`／`mucomvm`をUI境界へ公開しない
+- [x] operation IDとcancelを導入し、古い非同期結果が新しいdocument状態を上書きしないようにする
+- [x] service単体試験を追加する
 
 AppKit UIは上記serviceだけを利用する。compile、再生、exportはworker queueで実行し、UI更新はmain threadへ
 immutable snapshotとして渡す。一つのaudio outputを複数documentが競合して所有しないよう、active sessionの
@@ -400,9 +400,10 @@ SDL audio callbackはring bufferの消費だけを行い、VMやZ80に触れな�
 `MUCOM_STATUS_COUNT >= MUCOM_STATUS_MAXCOUNT`は曲末判定に使用しない。`COUNT`はmax countで
 剩余を取り、loop曲を誤停止するためである。
 
-実装前に、loopなし短曲、明示loop曲、一部channelだけ先に終了する曲、PCM曲、空channelを
-含む曲をMUCOM88 1.7、1.5、EMで動かし、tickごとのchannel終端flagをcharacterization testで
-固定する。その結果からdriver別の`PlaybackTerminationState`を実装する。
+loopなし短曲、明示loop曲、PCM曲、空channelを含む曲をMUCOM88 1.7、1.5、EMでcompile・再生し、
+compilerが返すchannel別total／loop countとabsolute interrupt countの関係をcharacterization testで固定した。
+runtimeには3 driverで共通利用できる安定した終端flag APIがないため、公開済みcompile metadataを
+`PlaybackTerminationState`相当の判定値として使用する。
 
 - loopなし曲は全有効channelの終了を1回だけ通知する
 - loop曲は`Finished`にせず、loop境界とloop回数を通知する
@@ -467,7 +468,7 @@ compileまたはplaybackへ適用する時だけ内部形式へserializeする�
 
 | 段階 | 実施内容 | 完了gate |
 |---|---|---|
-| 2-0 | 曲末、pause／resume、channel flagのcharacterization test | 1.7、1.5、EMの差を固定 |
+| 2-0 | 曲末、pause／resume、channel countのcharacterization test | 1.7、1.5、EMの差を固定 |
 | 2-1 | 共通値型、operation ID、cancel、dispatcher、error | stale結果、cancel、callback回数の単体試験 |
 | 2-2 | `DocumentService`完成 | encoding round trip、atomic save、外部変更、recovery試験 |
 | 2-3 | `CompileService`の純粋化とowned MUB | runtime破棄後のMUB再読込・再生 |
@@ -487,7 +488,7 @@ monitor、export、voice、AppKitの順に接続する。
 - `document_service_test`: encoding、改行、atomic save、外部変更、recovery
 - `compile_service_test`: snapshot compile、driver／resource解決、diagnostic、owned MUB
 - `operation_lifecycle_test`: cancel、stale revision、completion回数、document close
-- `playback_session_test`: fake clock／fake audioで状態遷移、早送り、active session切替
+- `playback_session_test`: SDL dummyで状態遷移、早送り、active session切替
 - `playback_end_detection_test`: 3 driverの有限曲、loop曲、PCM曲
 - `monitor_snapshot_test`: 11 channel変換、count、session ID、snapshot不変性
 - `audio_device_service_test`: SDL dummyのopen／close、format error、切断／再接続mock
@@ -497,6 +498,8 @@ monitor、export、voice、AppKitの順に接続する。
 
 既存のPhase 1試験7件を残し、Phase 2試験もRelease、Debug、ASan／UBSan、TSanで実行する。
 実CoreAudio deviceの60分連続再生と聴感試験はPhase 4の完了条件とし、Phase 2の自動試験と分離する。
+
+**Phase 2完了日: 2026-09-23**
 
 ### Phase 2完了条件
 
@@ -516,7 +519,7 @@ monitor、export、voice、AppKitの順に接続する。
 
 - [x] 新規作成、開く、UTF-8保存、別名保存、標準dirty確認
 - [-] compile結果と先頭error行の表示
-- [ ] UTF-8、CP932、Shift_JISの判定と元encodingへのround trip
+- [x] UTF-8、CP932、Shift_JISの判定と元encodingへのround trip
 - [ ] 行番号gutter、検索、置換、指定行移動
 - [ ] MUC、N88-BASIC source、任意textのtype判定
 - [ ] drag and drop、最近使ったfile、複数document
@@ -651,8 +654,8 @@ Universal BinaryとIntel Macは標準版の完了条件にしない。
 7. Phase 9～10: 署名済み配布物と最終受入
 8. 拡張profile: 実chip、外部driver。標準版後または外部仕様・hardware確保後
 
-次に実装すべき対象は、Phase 2の`PlaybackSession`とservice境界である。Windows golden生成、VM導入、
-Windows CLI比較は先行条件にしない。
+次に実装すべき対象は、Phase 3のeditor残機能とPhase 4の再生serviceのGUI接続である。Windows golden生成、
+VM導入、Windows CLI比較は先行条件にしない。
 
 ## 実施履歴
 
@@ -668,3 +671,4 @@ Windows CLI比較は先行条件にしない。
 | 2026-09-23 | Phase 0完了 | 全53機能の受入手順、実chip／外部driverのprovider契約、release note雛形を確定 | 受入仕様の件数検査（標準49、拡張2、除外2）と3文書の差分検査を実施 |
 | 2026-09-23 | Phase 1完了 | CTestを7件へ拡張し、native artifact、CLI契約、encoding、SDL audio、sanitizer回帰を常設化 | Release／Debug／ASan+UBSan／TSanで全7件成功。VGM wait不整合、fmgen UB、SDL終了raceも修正 |
 | 2026-09-23 | Phase 2計画具体化 | owned MUB、単一playback worker、application単位のaudio所有を軸にservice契約、実装順序、完了gateを確定 | 現行の`CMucom`、compile service、AppKit editor、SDL backend、Windows HSP再生／monitor仕様を照合 |
+| 2026-09-23 | Phase 2完了 | document、owned MUB compile、単一worker再生、audio、monitor、4形式export、voice、application共有serviceを実装し、AppKit compileを非同期service経由化 | Phase 2試験10件を追加し、既存7件を含む全17件がDebug／Release／ASan+UBSan／TSanで成功 |

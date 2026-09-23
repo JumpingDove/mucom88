@@ -4,8 +4,8 @@
 #include <memory>
 #include <string>
 
-#include "editor/mml_document.h"
-#include "editor/mucom_compile_service.h"
+#include "editor/application_services.h"
+#include "editor/document_service.h"
 
 namespace {
 
@@ -42,8 +42,9 @@ NSMenuItem *AddMenuItem(NSMenu *menu, NSString *title, SEL action,
 } // namespace
 
 @interface MucomDocument : NSDocument <NSTextViewDelegate> {
-    std::unique_ptr<mucom88::MmlDocument> _model;
-    std::unique_ptr<mucom88::MucomCompileService> _compiler;
+    std::unique_ptr<mucom88::DocumentService> _model;
+    std::shared_ptr<mucom88::ApplicationServices> _services;
+    mucom88::OperationHandle _compileOperation;
     NSTextView *_editorView;
     NSTextView *_messageView;
     NSTextField *_statusLabel;
@@ -57,8 +58,9 @@ NSMenuItem *AddMenuItem(NSMenu *menu, NSString *title, SEL action,
 {
     self = [super init];
     if (self != nil) {
-        _model = std::make_unique<mucom88::MmlDocument>();
-        _compiler = std::make_unique<mucom88::MucomCompileService>();
+        _model = std::make_unique<mucom88::DocumentService>();
+        _model->NewDocument();
+        _services = mucom88::SharedApplicationServices();
         _updatingEditor = NO;
     }
     return self;
@@ -93,7 +95,7 @@ NSMenuItem *AddMenuItem(NSMenu *menu, NSString *title, SEL action,
     compileButton.keyEquivalentModifierMask = NSEventModifierFlagCommand;
 
     _statusLabel = [NSTextField labelWithString:
-        _compiler->IsReady() ? @"Ready" : @"MUCOM88 initialization failed"];
+        _services->compiler->IsReady() ? @"Ready" : @"MUCOM88 initialization failed"];
     _statusLabel.lineBreakMode = NSLineBreakByTruncatingTail;
 
     NSStackView *controlBar = [NSStackView stackViewWithViews:
@@ -156,7 +158,7 @@ NSMenuItem *AddMenuItem(NSMenu *menu, NSString *title, SEL action,
     ]];
 
     _updatingEditor = YES;
-    _editorView.string = StringFromUtf8(_model->Text());
+    _editorView.string = StringFromUtf8(_model->Snapshot().utf8_text);
     _updatingEditor = NO;
 
     NSWindowController *controller = [[NSWindowController alloc]
@@ -173,9 +175,9 @@ NSMenuItem *AddMenuItem(NSMenu *menu, NSString *title, SEL action,
         return NO;
     }
     std::string text(static_cast<const char *>(data.bytes), data.length);
-    std::string message;
-    if (!_model->ReplaceText(std::move(text), &message)) {
-        SetError(error, 2, StringFromUtf8(message));
+    const auto result = _model->ReplaceText(std::move(text));
+    if (!result.Succeeded()) {
+        SetError(error, 2, StringFromUtf8(result.error.message));
         return NO;
     }
     return YES;
@@ -185,8 +187,12 @@ NSMenuItem *AddMenuItem(NSMenu *menu, NSString *title, SEL action,
 {
     (void)typeName;
     if (![self syncModelFromEditor:error]) return nil;
-    const std::string &text = _model->Text();
-    return [NSData dataWithBytes:text.data() length:text.size()];
+    const auto encoded = _model->EncodedData();
+    if (!encoded.Succeeded()) {
+        SetError(error, 3, StringFromUtf8(encoded.error.message));
+        return nil;
+    }
+    return [NSData dataWithBytes:encoded.value.data() length:encoded.value.size()];
 }
 
 - (BOOL)readFromData:(NSData *)data
@@ -194,24 +200,18 @@ NSMenuItem *AddMenuItem(NSMenu *menu, NSString *title, SEL action,
                 error:(NSError **)error
 {
     (void)typeName;
-    NSString *decoded = [[NSString alloc]
-        initWithData:data encoding:NSUTF8StringEncoding];
-    if (decoded == nil) {
-        SetError(error, 3,
-            @"This initial editor version accepts UTF-8 MML documents only.");
-        return NO;
-    }
-
-    const char *utf8 = decoded.UTF8String;
-    std::string message;
-    if (!_model->ReplaceText(utf8 != nullptr ? utf8 : "", &message)) {
-        SetError(error, 4, StringFromUtf8(message));
+    const std::string bytes(static_cast<const char *>(data.bytes), data.length);
+    const std::string path = self.fileURL == nil
+        ? std::string() : self.fileURL.fileSystemRepresentation;
+    const auto opened = _model->OpenData(bytes, path);
+    if (!opened.Succeeded()) {
+        SetError(error, 4, StringFromUtf8(opened.error.message));
         return NO;
     }
 
     if (_editorView != nil) {
         _updatingEditor = YES;
-        _editorView.string = decoded;
+        _editorView.string = StringFromUtf8(opened.value.utf8_text);
         _updatingEditor = NO;
     }
     return YES;
@@ -257,37 +257,52 @@ NSMenuItem *AddMenuItem(NSMenu *menu, NSString *title, SEL action,
         _statusLabel.stringValue = error.localizedDescription;
         return;
     }
-    if (!_compiler->IsReady()) {
+    if (!_services->compiler->IsReady()) {
         _statusLabel.stringValue = @"MUCOM88 initialization failed";
-        return;
-    }
-    if (self.fileURL == nil) {
-        _statusLabel.stringValue = @"Save the MML document before compiling";
         return;
     }
 
     mucom88::CompileRequest request = _model->MakeCompileRequest();
-    request.source_path = self.fileURL.fileSystemRepresentation;
-    request.resource_directory =
-        std::filesystem::path(request.source_path).parent_path().string();
+    if (self.fileURL != nil) {
+        request.source_path = self.fileURL.fileSystemRepresentation;
+        request.resource_directory =
+            std::filesystem::path(request.source_path).parent_path().string();
+    }
 
     _statusLabel.stringValue = @"Compiling…";
-    mucom88::CompileResult result = _compiler->Compile(request);
-    _messageView.string = StringFromUtf8(result.messages);
-    if (result.Succeeded()) {
-        _statusLabel.stringValue = [NSString stringWithFormat:
-            @"Compile succeeded (driver %d)", result.driver];
-    } else {
-        _statusLabel.stringValue = @"Compile failed";
-        if (!result.diagnostics.empty()) {
-            [self selectLine:result.diagnostics.front().line];
-        }
-    }
+    _compileOperation.Cancel();
+    __weak MucomDocument *weakSelf = self;
+    _compileOperation = _services->compiler->CompileAsync(std::move(request),
+        [weakSelf](mucom88::CompileResult result) mutable {
+            MucomDocument *document = weakSelf;
+            if (document == nil) return;
+            const mucom88::DocumentSnapshot current = document->_model->Snapshot();
+            if (result.document_id != current.document_id ||
+                result.revision != current.revision) return;
+            document->_messageView.string = StringFromUtf8(result.messages);
+            if (result.Succeeded()) {
+                document->_statusLabel.stringValue = [NSString stringWithFormat:
+                    @"Compile succeeded (driver %d)",
+                    static_cast<int>(result.driver)];
+            } else if (result.error.code != mucom88::ServiceErrorCode::Cancelled) {
+                document->_statusLabel.stringValue = @"Compile failed";
+                if (!result.diagnostics.empty()) {
+                    [document selectLine:result.diagnostics.front().line];
+                }
+            }
+        });
+}
+
+- (void)dealloc
+{
+    _compileOperation.Cancel();
 }
 
 @end
 
-@interface MucomAppDelegate : NSObject <NSApplicationDelegate>
+@interface MucomAppDelegate : NSObject <NSApplicationDelegate> {
+    std::shared_ptr<mucom88::ApplicationServices> _services;
+}
 @end
 
 
@@ -342,7 +357,22 @@ NSMenuItem *AddMenuItem(NSMenu *menu, NSString *title, SEL action,
 - (void)applicationWillFinishLaunching:(NSNotification *)notification
 {
     (void)notification;
+    mucom88::CompletionDispatcher mainDispatcher = [](mucom88::CompletionTask task) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (task) task();
+        });
+    };
+    _services = std::make_shared<mucom88::ApplicationServices>(
+        std::move(mainDispatcher));
+    mucom88::InstallApplicationServices(_services);
     [self installMainMenu];
+}
+
+- (void)applicationWillTerminate:(NSNotification *)notification
+{
+    (void)notification;
+    mucom88::InstallApplicationServices(nullptr);
+    _services.reset();
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification

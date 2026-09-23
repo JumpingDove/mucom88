@@ -763,8 +763,9 @@ iconvはHomebrew版ではなくCommand Line Tools SDKの`libiconv.tbd`が検出�
 ### 残課題
 
 - x86_64およびUniversal Binaryでの検証
-- CTestは7件を常設し、macOS版の決定性、round trip、format構造、MUB異常系、CLI契約、SDL dummy、
-  ASan/UBSan、TSanを確認済み。WAV/ADPCM readerの全異常系とfuzzingは今後の追加対象である。
+- CTestはPhase 1の7件とPhase 2の10件、計17件を常設し、macOS版の決定性、round trip、format構造、
+  MUB異常系、CLI契約、SDL dummy、service境界、ASan/UBSan、TSanを確認済み。WAV/ADPCM readerの
+  全異常系とfuzzingは今後の追加対象である。
   Windows ARM VM用harnessは任意調査用であり先行条件ではない
 - process-global `chdir`の完全排除。現実装はtag相対path互換のため処理全体を入力directoryで実行し、
   rhythm directoryへの変更だけを初期化中に限定して必ず復元する
@@ -850,7 +851,7 @@ ctest --test-dir build-debug --output-on-failure
 ```
 
 生成物は`build/mucom88`、`build/libmucom88_runtime.a`、test有効時は`build/tests/`以下のtest executableで
-ある。CTestにはPhase 1完了時点で7件が登録される。
+ある。CTestにはPhase 1の7件にPhase 2のservice試験10件を加えた17件が登録される。
 
 任意のprefixへinstallする場合は次のように指定する。現在のinstall targetはCLI executableのみで、
 `mucompcm.bin`、`voice.dat`、SDL2 dylibの配置はまだ自動化されていない。
@@ -874,6 +875,16 @@ ctest --test-dir build --output-on-failure
 | Test | 主な検証内容 |
 |---|---|
 | `editor_core_test` | document保存、相対resource compile、再生開始・停止、NUL拒否 |
+| `document_service_test` | UTF-8／CP932、改行、atomic save、外部変更競合、recovery |
+| `voice_service_test` | 256音色、8192 byte round trip、field検証、保存 |
+| `compile_service_test` | owned MUB、構造化diagnostic、非同期compile |
+| `operation_lifecycle_test` | operation ID、cancel、stale revision、破棄後callback |
+| `playback_session_test` | play／pause／resume／stop、速度、session切替、device loss |
+| `playback_end_detection_test` | 1.7／1.5／EMの有限曲、loop曲、PCM曲の終端規則 |
+| `monitor_snapshot_test` | A～K、count、session ID、immutable snapshot |
+| `audio_device_service_test` | SDL dummy列挙、format拒否、切断、再接続 |
+| `export_service_test` | MUB／WAV／VGM／S98、構造、progress、cancel、partial削除 |
+| `app_service_lifetime_test` | application共有所有、shutdown順、遅延callback寿命 |
 | `mub_validation_test` | MUB header／range、PCM有無、切断・overflow・不正magic拒否 |
 | `audiobuffer_test` | ring buffer、fractional sample、underflow、drop、frame境界 |
 | `codeconv_test` | CP932／Shift_JIS、UTF-8、半角PCM名、不正byte、短いbuffer |
@@ -905,9 +916,9 @@ cmake --build build-tsan --parallel
 ctest --test-dir build-tsan --output-on-failure
 ```
 
-二つのsanitizer optionは同時指定できない。2026-09-23にRelease、Debug、ASan+UBSan、TSanの各構成で
-全7件の成功を確認した。試験導入時に検出したVGM wait値の不整合、fmgenのsigned overflow／未初期化値、
-SDL timer callbackとaudio終了処理のdata raceも修正済みである。
+二つのsanitizer optionは同時指定できない。2026-09-23にPhase 1の全7件、同日にPhase 2追加後の
+Release、Debug、ASan+UBSan、TSan各構成で全17件の成功を確認した。試験導入時に検出したVGM wait値の
+不整合、fmgenのsigned overflow／未初期化値、SDL timer callbackとaudio終了処理のdata raceも修正済みである。
 
 ### 13.4 Makefileによるビルド
 
@@ -1167,7 +1178,8 @@ SDL dummy driverではbuffer制御と終了経路を確認できるが、実際�
 
 AppKitとObjective-C++で実装したnative document applicationを、CMake target
 `mucom88_editor`から`MUCOM88Editor.app`として生成する。full Xcode projectやSwift packageは不要で、
-Command Line Tools環境でbuildできる。UIは既存の`MmlDocument`と`MucomCompileService`を使用し、
+Command Line Tools環境でbuildできる。UIは`DocumentService`とapplication共有の
+`ApplicationServices`／`MucomCompileService`だけを使用し、`CMucom`やVMの内部型を参照しない。
 Windows HSP GUI、FM音色editor、pluginとは分離している。
 
 初期実装で利用できる機能は次の通り。
@@ -1175,7 +1187,7 @@ Windows HSP GUI、FM音色editor、pluginとは分離している。
 - 新規文書、MUCを開く、保存、別名保存、未保存文書を閉じる際の標準確認
 - monospaced fontの複数行MML編集、Undo/Redo、Cut/Copy/Paste
 - window titleへのfile名表示と`.muc` document typeの登録
-- `Compile` buttonまたはCommand-Rによる編集中snapshotのcompile
+- `Compile` buttonまたはCommand-Rによる編集中snapshotの非同期compileと旧operationのcancel
 - compile messageの表示、失敗時の先頭diagnostic行選択
 - MUCと同じdirectoryを基準にした`#voice`および`#pcm`相対pathの解決
 
@@ -1234,16 +1246,18 @@ copyしなくても上記commandで起動できる。`open`は起動要求後に
 `build/MUCOM88Editor.app/Contents/MacOS/MUCOM88Editor`を直接実行すると、GUI processが終了するまで
 terminalが待機するが、hangではなく通常のforeground process動作である。
 
-MUCを保存してから`Compile`を押す。未保存の新規文書はresource directoryを確定できないため、
-先に保存するようstatusへ表示する。compileはfileへ再保存した内容ではなく、editor上の最新text snapshotを
-使用する。`#voice`と`#pcm`の相対pathは保存先MUCと同じdirectoryから解決する。
+compileはfileへ再保存した内容ではなく、editor上の最新text snapshotを使用する。未保存の新規文書も
+compileできるが、相対resourceを使う文書は先に保存して基準directoryを確定する。保存済み文書の`#voice`と
+`#pcm`の相対pathはMUCと同じdirectoryから解決する。編集中に新しいcompileを要求した場合は旧operationを
+cancelし、完了時のdocument ID／revisionが現在値と異なる結果をUIへ反映しない。
 
 ### 17.4 現在の制約
 
-- 読み書きできる文書encodingはUTF-8のみ。CP932/Shift_JISの自動判定と元encodingへのround tripは未実装
-- compileは現状UI thread上で同期実行する。大きな文書向けのworker、progress、cancelは未実装
-- GUIからの再生、停止、音量、monitor、WAV/VGM/S98 exportは未実装。再生は引き続きCLIを使用する
-- `.muc`以外のN88-BASIC source、MUB、drag and drop、autosave/recovery、検索、行番号gutterは未実装
+- 文書serviceはUTF-8/BOM、CP932、Shift_JISの判定と元encodingへのround tripを実装済みだが、UIから
+  encodingを明示変更する操作は未実装
+- compileはserial workerで非同期実行する。GUIからの再生、停止、速度、monitor、WAV/VGM/S98 exportは
+  service実装まで完了しているが、画面のtransport／save panelは未接続。操作は引き続きCLIを使用する
+- `.muc`以外のN88-BASIC source、MUB、drag and drop、recovery復元UI、検索、行番号gutterは未実装
 - sandbox、security-scoped bookmark、app icon、Developer ID署名、notarizationは未実装
 - bundleはHomebrewのSDL2-compat dylibを参照する開発用成果物であり、別Macへそのまま配布できる形ではない
 
@@ -1258,7 +1272,8 @@ GUIで保存したMUCを再生する場合はrepository top directoryから次�
 2026-09-23にApple Silicon/macOS 26.6.2上でDebug bundleをbuildし、Info.plist、arm64 Mach-O、
 ad-hoc署名、CTestを検証した。Launch Servicesからappを起動し、`package/sampl1.muc`の本文表示、
 文書相対`voice.dat`/`mucompcm.bin`を使ったcompile成功、message paneへの結果表示を確認した。
-`editor_core_test`も1件成功している。再生機能はこのGUI検証の対象外である。
+Phase 2後はAppKit targetを含むbuildと全17件のCTestを成功させている。再生serviceはSDL dummyで検証し、
+再生操作そのものはこのGUI実機検証の対象外である。
 
 ## 18. Windows ARM VMでの機能比較golden生成
 
@@ -1334,3 +1349,65 @@ Windows binaryによる実artifact生成、PowerShell scriptのWindows上での�
 この任意調査を実施する場合の完了条件は、固定VM snapshotで二重生成を成功させ、全artifactの決定性と構造を
 reviewし、搬出したcandidateのmanifest検証に成功した上で、artifact、hash、VM metadataを記録することである。
 結果は参考情報として扱い、標準CTestへ必須のWindows比較として追加しない。
+
+## 19. Phase 2 Core APIとapplication境界
+
+2026-09-23に、GUI機能を安全に追加するためのplatform-neutral service境界を実装した。AppKitは
+`CMucom`、`mucomvm`、`PCHDATA`、voice bit-fieldへ直接依存せず、値型とimmutable snapshotだけを扱う。
+
+### 19.1 serviceと所有権
+
+| service | 実装済み責務 |
+|---|---|
+| `DocumentService` | UTF-8／BOM／CP932／Shift_JIS、改行保持、atomic save、外部変更競合、recovery |
+| `MucomCompileService` | serial worker、driver／resource解決、構造化diagnostic、owned MUB |
+| `PlaybackSession` | 単一worker上のVM、play／pause／resume／stop、x1～x10、曲末、session切替 |
+| `AudioDeviceService` | SDL output列挙、44.1 kHz S16 stereo、ring buffer、切断、再open、診断値 |
+| `MonitorSnapshot` | A～Kの11 channel、interrupt／current／max／loop count、audio診断 |
+| `ExportService` | MUB／WAV／VGM／S98の非同期出力、progress、cancel、partial file削除 |
+| `VoiceService` | 256音色の正規化model、8192 byte round trip、検証、atomic save、preview request |
+| `ApplicationServices` | application単位で1つのaudio output、playback、compiler、exporter、voiceを所有 |
+
+compile結果の`CompiledSong`はMUB全byte列、driver、channelごとのtotal／loop count、source revision、
+resource directory、content IDを所有する。compiler runtimeを破棄した後も再読込、再生、exportできる。
+再生用`CMucom`は`MUCOM_OPTION_STEP`で初期化し、VM操作とmonitor取得を1本のplayback workerへ限定した。
+SDL callbackはVMに触れず、事前充填したring bufferを消費するだけである。
+
+全非同期結果は`OperationId`を持ち、document由来の処理は`DocumentId`と`Revision`も返す。新しいplay要求は
+`SessionId`を更新し、遅れて届いた旧sessionのobserver eventを破棄する。callbackは指定dispatcherへ渡し、
+AppKitではmain queue dispatcherを使用する。shutdownはobserver解除、export／compile queue停止、playback
+worker停止、audio closeの順で行い、global service registryのmutexを保持したままworker完了を待たない。
+
+### 19.2 曲末とmonitorの規則
+
+`MUCOM_STATUS_COUNT`はloop時に剰余となるため自然終了判定には使わない。compile時に取得した各channelの
+loop countがすべて0である有限曲は、absolute interrupt countがmax countへ達した後にruntimeを停止し、
+ring buffer排出後に`Finished`とする。1 channelでもloop countが正なら自動終了せず、absolute countから
+loop回数を通知する。この規則はMUCOM88 1.7、1.5、EMそれぞれについて、有限曲、`L`指定loop曲、PCMを
+含む`sampl1.muc`で固定した。
+
+monitorは1回のworker更新で11 channelを値型へcopyし、`shared_ptr<const MonitorSnapshot>`として公開する。
+UIが保持済みのsnapshotは後続更新で書き換わらない。描画頻度の15～30 Hz制限と実際のmonitor viewは
+Phase 5で追加する。
+
+### 19.3 buildと検証
+
+build commandは13章および17.2節と同じである。Phase 2追加後は次の17件を常設し、Debug、Release、
+ASan+UBSan、TSanで全件成功している。
+
+```sh
+cmake -S src -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
+
+Phase 2固有の10件は`document_service_test`、`voice_service_test`、`compile_service_test`、
+`operation_lifecycle_test`、`playback_session_test`、`playback_end_detection_test`、
+`monitor_snapshot_test`、`audio_device_service_test`、`export_service_test`、
+`app_service_lifetime_test`である。既存Phase 1の7件も同時に成功し、CLI経路を維持している。
+
+### 19.4 Phase 2外の項目
+
+Core APIは実装済みだが、editor windowのtransport、monitor view、audio device picker、export save panel、
+FM音色editorはまだ接続していない。実CoreAudio deviceでの60分連続再生、聴感、切断試験もPhase 4で行う。
+したがってPhase 2完了はGUI再生機能や配布版の完成を意味しない。

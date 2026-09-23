@@ -390,6 +390,8 @@ public:
 
 	//	MUCOM88 MUC/MUB service
 	int LoadMusic(const char *fname, int num = 0);
+	int LoadMusicData(const void *data, int size, int num = 0);
+	bool CopyMusicData(int num, std::vector<unsigned char> *output);
 	int CompileFile(const char *fname, const char *sname, int option=0);
 	int CompileMemory(const char* fname, int option = 0);
 	int CompileMem(char *mem, int option=0);
@@ -408,6 +410,10 @@ public:
 	const char *GetMessageBuffer(void);
 	int GetMessageBufferSize(void);
 	int GetStatus(int option);
+	int GetChannelTotalCount(int channel) const;
+	int GetChannelLoopCount(int channel) const;
+	int GetLastCompileErrorCode() const { return last_compile_error_code; }
+	int GetLastCompileErrorLine() const { return last_compile_error_line; }
 	void SetVMOption(int option, int mode);
 	void SetAudioRate(int rate);
 
@@ -567,6 +573,8 @@ private:
 	int fmvoice;
 	int tcount[MUCOM_MAXCH];
 	int lcount[MUCOM_MAXCH];
+	int last_compile_error_code;
+	int last_compile_error_line;
 	int maxcount;
 	int basicsize;
 	int mubsize;

@@ -152,6 +152,8 @@ CMucom::CMucom( void )
 	hedmusic = NULL;
 
 	music_start_address = MUCOM_ADDRESS_MUSIC;
+	last_compile_error_code = 0;
+	last_compile_error_line = 0;
 
 	p_log = NULL;
 	p_wav = NULL;
@@ -826,6 +828,37 @@ int CMucom::LoadMusic(const char * fname, int num)
 	return 0;
 }
 
+int CMucom::LoadMusicData(const void *data, int size, int num)
+{
+	if (data == NULL || size <= 0) return -1;
+	if ((num < 0) || (num >= MUCOM_MUSICBUFFER_MAX)) return -1;
+
+	CMemBuf *buf = new CMemBuf();
+	buf->PutData(const_cast<void *>(data), size);
+	if (!MUBValidate((MUBHED *)buf->GetBuffer(), buf->GetSize())) {
+		delete buf;
+		return -2;
+	}
+
+	if (musbuf[num] != NULL) delete musbuf[num];
+	musbuf[num] = buf;
+	NoticePlugins(MUCOM88IF_NOTICE_LOADMUB);
+	return 0;
+}
+
+bool CMucom::CopyMusicData(int num, std::vector<unsigned char> *output)
+{
+	if (output == NULL) return false;
+	output->clear();
+	if ((num < 0) || (num >= MUCOM_MUSICBUFFER_MAX)) return false;
+	CMemBuf *buf = musbuf[num];
+	if (buf == NULL || buf->GetSize() <= 0) return false;
+	const unsigned char *begin =
+		reinterpret_cast<const unsigned char *>(buf->GetBuffer());
+	output->assign(begin, begin + buf->GetSize());
+	return true;
+}
+
 void CMucom::MusicBufferInit(void)
 {
 	for (int i = 0; i < MUCOM_MUSICBUFFER_MAX; i++) {
@@ -893,6 +926,18 @@ int CMucom::GetStatus(int option)
 		break;
 	}
 	return 0;
+}
+
+int CMucom::GetChannelTotalCount(int channel) const
+{
+	if (channel < 0 || channel >= MUCOM_MAXCH) return 0;
+	return tcount[channel];
+}
+
+int CMucom::GetChannelLoopCount(int channel) const
+{
+	if (channel < 0 || channel >= MUCOM_MAXCH) return 0;
+	return lcount[channel];
 }
 
 
@@ -1739,6 +1784,8 @@ int CMucom::Compile(char *text, int option, bool writeMub, const char *filename)
 	char* adr_length;
 	int workadr;
 	int pcmflag;
+	last_compile_error_code = 0;
+	last_compile_error_line = 0;
 
 	maxch = MUCOM_MAXCH;				// ワークの取得が難しいため固定値
 
@@ -1776,6 +1823,8 @@ int CMucom::Compile(char *text, int option, bool writeMub, const char *filename)
 	if (res) {
 		int line = vm->Peekw(0x0f32e);
 		int msgid = vm->GetMessageId();
+		last_compile_error_code = msgid;
+		last_compile_error_line = line;
 		if (msgid > 0) {
 			PRINTF_NOCONV("#error %d in line %d.\r\n-> %s (%s)\r\n", msgid, line, mucom_geterror_j(msgid), mucom_geterror(msgid));
 		}

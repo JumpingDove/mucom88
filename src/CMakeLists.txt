@@ -57,7 +57,15 @@ add_library(mucom88_runtime STATIC
     callback.cpp
     osdep.cpp
     editor/mml_document.cpp
+    editor/service_types.cpp
+    editor/serial_executor.cpp
+    editor/application_services.cpp
+    editor/document_service.cpp
     editor/mucom_compile_service.cpp
+    editor/audio_device_service.cpp
+    editor/playback_session.cpp
+    editor/export_service.cpp
+    editor/voice_service.cpp
     plugin/plugin.cpp
     Z80/Z80.cpp
     fmgen/file.cpp

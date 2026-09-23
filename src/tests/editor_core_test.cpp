@@ -73,10 +73,8 @@ int main()
     if (!result.Succeeded()) std::cerr << result.messages << '\n';
     passed &= Expect(result.Succeeded(),
         "sampl1.muc must compile with document-relative voice and PCM data");
-    passed &= Expect(compiler.PlayCompiled() == 0,
-        "compiled document must enter the normal playback path");
-    passed &= Expect(compiler.Stop() == 0,
-        "compiled document playback must stop cleanly");
+    passed &= Expect(result.song != nullptr && !result.song->mub_bytes.empty(),
+        "compiled document must return an owned MUB artifact");
     passed &= Expect(ReadFile(voice) == voiceBefore,
         "compilation must treat voice.dat as read-only");
     passed &= Expect(ReadFile(temporary / "voice.dat") == voiceBefore,
