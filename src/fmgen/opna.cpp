@@ -387,6 +387,8 @@ OPNABase::OPNABase()
 	deltan = 256;
 
 	adpcmvol = 0;
+	adpcmlevel = 0;
+	adpcmvolume = 0;
 	control2 = 0;
 
 	MakeTable2();

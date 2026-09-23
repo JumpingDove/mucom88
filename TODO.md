@@ -45,14 +45,14 @@ macOS向けMUCOM88 CLIを、ローカルとGitHub Actionsの両方で再現可�
 
 ### CMake構成
 
-- [ ] `src/CMakeLists.txt`のtop levelで`include(CTest)`を呼ぶ
-- [ ] `BUILD_TESTING=ON`の場合だけ`add_subdirectory(tests)`する
-- [ ] `src/tests/CMakeLists.txt`を新設する
-- [ ] test helperまたは小規模な`CHECK()` macroを用意する
-- [ ] 各testへ明示的なtimeoutを設定する
-- [ ] 各testの作業directoryを`${CMAKE_CURRENT_BINARY_DIR}/test-work/<test-name>`へ分離する
-- [ ] testを並列実行しても出力file名が衝突しないことを確認する
-- [ ] `ctest --test-dir build --output-on-failure`だけで全自動試験を実行可能にする
+- [x] `src/CMakeLists.txt`のtop levelで`include(CTest)`を呼ぶ
+- [x] `BUILD_TESTING=ON`の場合だけ`add_subdirectory(tests)`する
+- [x] `src/tests/CMakeLists.txt`を新設する
+- [x] test helperまたは小規模な`CHECK()` macroを用意する
+- [x] 各testへ明示的なtimeoutを設定する
+- [x] 各testの作業directoryを`${CMAKE_CURRENT_BINARY_DIR}/test-work/<test-name>`へ分離する
+- [x] testを並列実行しても出力file名が衝突しないことを確認する
+- [x] `ctest --test-dir build --output-on-failure`だけで全自動試験を実行可能にする
 
 ### 想定ファイル
 
@@ -67,29 +67,31 @@ macOS向けMUCOM88 CLIを、ローカルとGitHub Actionsの両方で再現可�
 
 外部test frameworkは初期導入では必須としない。標準C/C++とCTestだけで十分な場合は依存を追加しない。
 
+**Phase 1完了日: 2026-09-23**
+
 ## Phase 2: 単体試験
 
 ### AudioBuffer
 
-- [ ] 通常のread/write
-- [ ] ring buffer終端をまたぐwraparound
-- [ ] 空き容量より大きいwriteが実書込frame数を返すこと
-- [ ] `TickToSamples()`が小数sampleを保持すること
-- [ ] `ConsumeSamples()`が実書込分だけを差し引くこと
-- [ ] underflow回数が増えること
-- [ ] underflow後に送出停止状態になること
+- [x] 通常のread/write
+- [x] ring buffer終端をまたぐwraparound
+- [x] 空き容量より大きいwriteが実書込frame数を返すこと
+- [x] `TickToSamples()`が小数sampleを保持すること
+- [x] `ConsumeSamples()`が実書込分だけを差し引くこと
+- [x] underflow回数が増えること
+- [x] underflow後に送出停止状態になること
 - [ ] high-water markまで再充填後に再開できること
-- [ ] 未生成sampleの上限とdropped sample計数
-- [ ] stereo frame境界が常に偶数sampleになること
+- [x] 未生成sampleの上限とdropped sample計数
+- [x] stereo frame境界が常に偶数sampleになること
 
 ### MUB
 
-- [ ] 正常なMUB headerとdata/tag/PCM offset
-- [ ] header未満の切断file
-- [ ] file末尾を越えるoffset/size
-- [ ] 整数overflowを誘発するoffset/size
-- [ ] 不正magic/version
-- [ ] PCMなしMUBとPCM内蔵MUB
+- [x] 正常なMUB headerとdata/tag/PCM offset
+- [x] header未満の切断file
+- [x] file末尾を越えるoffset/size
+- [x] 整数overflowを誘発するoffset/size
+- [x] 不正magic/version
+- [x] PCMなしMUBとPCM内蔵MUB
 
 ### WAV/ADPCM
 
@@ -105,58 +107,58 @@ macOS向けMUCOM88 CLIを、ローカルとGitHub Actionsの両方で再現可�
 
 ### 文字コードとpath
 
-- [ ] CP932/Shift_JISからUTF-8への既知文字列変換
-- [ ] legacy PCM名`ｺｰﾗｽ`の変換
-- [ ] 変換不能byte
-- [ ] 出力buffer不足
-- [ ] 空白、日本語、UTF-8を含むdirectory/file名
+- [x] CP932/Shift_JISからUTF-8への既知文字列変換
+- [x] legacy PCM名`ｺｰﾗｽ`の変換
+- [x] 変換不能byte
+- [x] 出力buffer不足
+- [x] 空白、日本語、UTF-8を含むdirectory/file名
 - [ ] macOSのUnicode正規化差を含むpath
-- [ ] 入力fileとは異なるcurrent directoryからの実行
+- [x] 入力fileとは異なるcurrent directoryからの実行
 
 ### CLI契約
 
-- [ ] `-h`はexit 0
-- [ ] 引数なし、option値不足、未知optionはexit 2
-- [ ] 未対応のplugin/SCCI指定はexit 2
-- [ ] 存在しない入力、PCM、voiceはexit 1
-- [ ] `-g`、`-i`、`-x`ではaudio deviceを開かない
-- [ ] output作成失敗をexit 1として伝播する
+- [x] `-h`はexit 0
+- [x] 引数なし、option値不足、未知optionはexit 2
+- [x] 未対応のplugin/SCCI指定はexit 2
+- [x] 存在しない入力、PCM、voiceはexit 1
+- [x] `-g`、`-i`、`-x`ではaudio deviceを開かない
+- [x] output作成失敗をexit 1として伝播する
 
 ## Phase 3: Offline結合試験
 
 ### sample compile
 
-- [ ] `package/sampl1.muc`をMUBへcompileする
-- [ ] `package/sampl2.muc`をMUBへcompileする
-- [ ] `package/sampl3.muc`をMUBへcompileする
-- [ ] 期待size（65,647 / 3,886 / 1,309 byte）を確認する
-- [ ] MUB header fieldを構造的に検査する
-- [ ] 検証済みbaselineとのSHA-256比較を追加する
-- [ ] PCMありMUBでPCM offset/sizeが非0であることを確認する
+- [x] `package/sampl1.muc`をMUBへcompileする
+- [x] `package/sampl2.muc`をMUBへcompileする
+- [x] `package/sampl3.muc`をMUBへcompileする
+- [x] 期待size（65,647 / 3,886 / 1,309 byte）を確認する
+- [x] MUB header fieldを構造的に検査する
+- [x] 検証済みbaselineとのSHA-256比較を追加する
+- [x] PCMありMUBでPCM offset/sizeが非0であることを確認する
 
 ### offline出力
 
-- [ ] Sample Music 1から1秒WAVを生成する
-- [ ] WAVが176,444 byteであることを確認する
-- [ ] 44.1 kHz、16 bit、stereo、RIFF/data sizeを確認する
-- [ ] PCM sample領域のSHA-256を確認する
-- [ ] 1秒VGMのheader、size、data hashを確認する
-- [ ] S98のheader、size、data hashを確認する
-- [ ] 指定秒数が16 frameの倍数でなくても末尾sample数が正確であることを確認する
+- [x] Sample Music 1から1秒WAVを生成する
+- [x] WAVが176,444 byteであることを確認する
+- [x] 44.1 kHz、16 bit、stereo、RIFF/data sizeを確認する
+- [x] PCM sample領域を含むWAV全体のSHA-256を確認する
+- [x] 1秒VGMのheader、size、data hashを確認する
+- [x] S98のheader、size、data hashを確認する
+- [x] 指定秒数が16 frameの倍数でなくても末尾sample数が正確であることを確認する
 
 golden更新は通常のtest実行から分離し、明示的な更新commandとreviewを必要とする設計にする。
 
 ## Phase 4: SDL dummy audio試験
 
-- [ ] `SDL_AUDIODRIVER=dummy`をtest propertyへ設定する
-- [ ] `SDL_OpenAudioDevice`が成功することを確認する
-- [ ] 初回buffer充填後にdeviceを開始することを確認する
-- [ ] 5～10秒の固定時間で自動終了する専用test harnessを用意する
-- [ ] underrunが0であることを確認する
-- [ ] dropped samplesが0であることを確認する
-- [ ] timer停止、device pause/close、subsystem解放後にhangしないことを確認する
-- [ ] open/closeを複数回反復する
-- [ ] test全体へ15秒程度のtimeoutを設定する
+- [x] `SDL_AUDIODRIVER=dummy`をtest propertyへ設定する
+- [x] `SDL_OpenAudioDevice`が成功することを確認する
+- [x] 初回buffer充填後にdeviceを開始することを確認する
+- [x] 5～10秒の固定時間で自動終了する専用test harnessを用意する
+- [x] underrunが0であることを確認する
+- [x] dropped samplesが0であることを確認する
+- [x] timer停止、device pause/close、subsystem解放後にhangしないことを確認する
+- [x] open/closeを複数回反復する
+- [x] test全体へ20秒のtimeoutを設定する
 
 realtime CLIはCtrl-Cまで終了しないため、CIから外部signalで終了させる方式を主要試験にしない。
 

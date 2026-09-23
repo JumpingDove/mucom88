@@ -93,6 +93,7 @@ bool OsDependentSdl::CoInitialize()
 
 bool OsDependentSdl::InitAudio(void *, int rate, int)
 {
+    std::lock_guard<std::mutex> stateLock(AudioStateMutex);
     if (AudioOpenFlag) return true;
     if (!InitSubsystem(SDL_INIT_AUDIO)) return false;
 
@@ -134,6 +135,7 @@ bool OsDependentSdl::InitAudio(void *, int rate, int)
 void OsDependentSdl::FreeAudio()
 {
     ShuttingDown.store(true, std::memory_order_release);
+    std::lock_guard<std::mutex> stateLock(AudioStateMutex);
     const int underruns = Buffer->GetUnderCount();
     const std::uint64_t dropped = Buffer->GetDroppedSamples();
     if (underruns > 0 || dropped > 0) {
@@ -153,6 +155,8 @@ void OsDependentSdl::FreeAudio()
 
 bool OsDependentSdl::SendAudio(int ms)
 {
+    if (ShuttingDown.load(std::memory_order_acquire)) return false;
+    std::lock_guard<std::mutex> stateLock(AudioStateMutex);
     if (ShuttingDown.load(std::memory_order_acquire)) return false;
     const bool sending = Buffer->IsSending();
     const int pending = sending ? 0 : Buffer->TickToSamples(ms);
@@ -189,6 +193,18 @@ bool OsDependentSdl::SendAudio(int ms)
         }
     }
     return true;
+}
+
+bool OsDependentSdl::IsAudioOpen() const
+{
+    std::lock_guard<std::mutex> stateLock(AudioStateMutex);
+    return AudioOpenFlag;
+}
+
+bool OsDependentSdl::IsAudioDeviceStarted() const
+{
+    std::lock_guard<std::mutex> stateLock(AudioStateMutex);
+    return AudioDeviceStarted;
 }
 
 void OsDependentSdl::AudioMain(short *buffer, int frames)

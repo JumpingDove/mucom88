@@ -7,6 +7,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <mutex>
 
 #include "../osdep.h"
 #include "audiobuffer.h"
@@ -55,6 +56,11 @@ public:
     bool SetBreakHook();
     bool GetBreakStatus();
 
+    bool IsAudioOpen() const;
+    bool IsAudioDeviceStarted() const;
+    int GetAudioUnderrunCount() { return Buffer->GetUnderCount(); }
+    std::uint64_t GetDroppedAudioSamples() { return Buffer->GetDroppedSamples(); }
+
 private:
     bool InitSubsystem(Uint32 flags);
     void QuitSubsystem(Uint32 flags);
@@ -67,6 +73,7 @@ private:
     SDL_TimerID TimerId;
     Uint32 InitializedSubsystems;
     std::atomic<bool> ShuttingDown;
+    mutable std::mutex AudioStateMutex;
     std::chrono::steady_clock::time_point StartTime;
 };
 

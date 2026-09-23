@@ -21,6 +21,8 @@
 //		ほか掲示板等で様々なご助言，ご支援をお寄せいただいた皆様に
 // ---------------------------------------------------------------------------
 
+#include <cstdint>
+
 #include "headers.h"
 #include "misc.h"
 #include "fmgen.h"
@@ -674,7 +676,9 @@ inline FM::ISample FM::Operator::CalcFB(uint fb)
 	int pgin = PGCalc() >> (20+FM_PGBITS-FM_OPSINBITS);
 	if (fb < 31)
 	{
-		pgin += ((in << (1 + IS2EC_SHIFT)) >> fb) >> (20+FM_PGBITS-FM_OPSINBITS);
+		const std::int64_t feedback =
+			static_cast<std::int64_t>(in) * (1 << (1 + IS2EC_SHIFT));
+		pgin += (feedback >> fb) >> (20+FM_PGBITS-FM_OPSINBITS);
 	}
 	out_ = LogToLin(eg_out_ + SINE(pgin));
 	dbgopout_ = out2_;
@@ -692,7 +696,9 @@ inline FM::ISample FM::Operator::CalcFBL(uint fb)
 	int pgin = PGCalcL() >> (20+FM_PGBITS-FM_OPSINBITS);
 	if (fb < 31)
 	{
-		pgin += ((in << (1 + IS2EC_SHIFT)) >> fb) >> (20+FM_PGBITS-FM_OPSINBITS);
+		const std::int64_t feedback =
+			static_cast<std::int64_t>(in) * (1 << (1 + IS2EC_SHIFT));
+		pgin += (feedback >> fb) >> (20+FM_PGBITS-FM_OPSINBITS);
 	}
 
 	out_ = LogToLin(eg_out_ + SINE(pgin) + ams_[chip_->GetAML()]);

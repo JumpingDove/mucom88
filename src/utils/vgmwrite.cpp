@@ -140,9 +140,8 @@ void VGMWrite::WriteSync() {
 }
 
 void VGMWrite::WriteSync2(int Count) {
-	Count -= 1;
-	if (Count < 0x10) {
-		WriteValue(0x70 + Count);
+	if (Count <= 0x10) {
+		WriteValue(0x70 + Count - 1);
 		return;
 	}
 
@@ -167,4 +166,3 @@ void VGMWrite::SetLoopPoint() {
 void VGMWrite::Wait(double seconds) {
 	SyncBufferTicks += seconds;
 }
-

@@ -51,7 +51,7 @@ WAV、VGM、S98はWindows版との一致を保証しないが、それぞれのf
 
 | レベル | 対象 | 現状 |
 |---|---|---|
-| Level 1 | CLI compile、再生、MUB/WAV/VGM/S98出力 | 基本経路は実装済み。常設回帰試験と文書化が未完了 |
+| Level 1 | CLI compile、再生、MUB/WAV/VGM/S98出力 | 基本経路とmacOS native常設回帰試験7件を実装済み |
 | Level 2 | MML editor、compile、再生、browser、export | 編集・保存・compileまで一部実装。再生以降は未完了 |
 | Level 3 | player、monitor、PCM tool、FM音色editor、CoreMIDI | 未着手または旧Makefile targetのみ |
 | Level 4 | 署名済み配布、更新、共有、外部provider | 未着手。実chipは拡張profile |
@@ -228,25 +228,27 @@ Windows GUIでchannel mute値は表示のみであり操作機能は確認でき
 
 ### 追加する常設試験
 
-- [ ] CTestを`src/tests/CMakeLists.txt`へ分離し、testごとのtimeoutと作業directoryを設定する
-- [ ] sample 1～3を各2回compileし、macOS版内で決定的であることを確認する
-- [ ] 生成MUBを再読込し、PCMあり・なしを再生できることを確認する
-- [ ] MUCOM88 1.7、1.5、EMを個別に試験する
-- [ ] MUBのheader、section、offset、size、tag、PCM領域を独立parserで検査する
-- [ ] WAVのRIFF size、44.1 kHz、16 bit、stereo、sample数、PCM非無音を検査する
-- [ ] VGM 1.70 header、YM2608 clock、command列、総sample数、終端を検査する
-- [ ] S98 v3 header、device table、wait command、終端を検査する
-- [ ] 切断file、不正magic、不正offset、整数overflowを拒否する
-- [ ] Debug／Release、`-O0`／`-O3`で意味的な結果が一致することを確認する
-- [ ] CP932、Shift_JIS、UTF-8、日本語・空白pathを試験する
-- [ ] macOS版として定義したCLI終了codeとstdout／stderrを固定する
-- [ ] `-g`、`-i`、`-x`でaudio deviceを開かないことを確認する
-- [ ] SDL dummyでopen／play／stop／closeを反復し、hang、underrun、破棄sampleがないことを確認する
-- [ ] ASan／UBSan／TSanを実行する
-- [ ] test前後でsource treeが変更されないことを確認する
+- [x] CTestを`src/tests/CMakeLists.txt`へ分離し、testごとのtimeoutと作業directoryを設定する
+- [x] sample 1～3を各2回compileし、macOS版内で決定的であることを確認する
+- [x] 生成MUBを再読込し、PCMあり・なしを再生できることを確認する
+- [x] MUCOM88 1.7、1.5、EMを個別に試験する
+- [x] MUBのheader、section、offset、size、tag、PCM領域を独立parserで検査する
+- [x] WAVのRIFF size、44.1 kHz、16 bit、stereo、sample数、PCM非無音を検査する
+- [x] VGM 1.70 header、YM2608 clock、command列、総sample数、終端を検査する
+- [x] S98 v3 header、device table、wait command、終端を検査する
+- [x] 切断file、不正magic、不正offset、整数overflowを拒否する
+- [x] Debug／Release、`-O0`／`-O3`で意味的な結果が一致することを確認する
+- [x] CP932、Shift_JIS、UTF-8、日本語・空白pathを試験する
+- [x] macOS版として定義したCLI終了codeとstdout／stderrを固定する
+- [x] `-g`、`-i`、`-x`でaudio deviceを開かないことを確認する
+- [x] SDL dummyでopen／play／stop／closeを反復し、hang、underrun、破棄sampleがないことを確認する
+- [x] ASan／UBSan／TSanを実行する
+- [x] test前後でsource treeが変更されないことを確認する
 
 macOS native baselineには入力hash、artifactの構造値とhash、macOS、clang、SDL、build type、architectureを
 記録する。これはWindows互換goldenではなく、macOS版のregression baselineとする。
+
+**Phase 1完了日: 2026-09-23**
 
 ## Phase 2: Core APIとapplication境界
 
@@ -405,8 +407,8 @@ Universal BinaryとIntel Macは標準版の完了条件にしない。
 7. Phase 9～10: 署名済み配布物と最終受入
 8. 拡張profile: 実chip、外部driver。標準版後または外部仕様・hardware確保後
 
-次に実装すべき対象は、Phase 1の常設回帰試験と、Phase 2の`PlaybackSession`である。Windows golden生成、
-VM導入、Windows CLI比較は先行条件にしない。
+次に実装すべき対象は、Phase 2の`PlaybackSession`とservice境界である。Windows golden生成、VM導入、
+Windows CLI比較は先行条件にしない。
 
 ## 実施履歴
 
@@ -420,3 +422,4 @@ VM導入、Windows CLI比較は先行条件にしない。
 | 2026-09-23 | 任意調査基盤 | Windows ARM VM用golden生成harnessを追加 | manifest verifierをsynthetic candidateで確認。Windows実行は未実施 |
 | 2026-09-23 | 方針再構築 | Windows runtime／生成物互換を完了条件から除外し、GUI機能同等化とmacOS native受入へ変更 | 53項目を標準版49、拡張profile 2、除外2へ再分類。VMとWindows goldenをrelease gateから除外 |
 | 2026-09-23 | Phase 0完了 | 全53機能の受入手順、実chip／外部driverのprovider契約、release note雛形を確定 | 受入仕様の件数検査（標準49、拡張2、除外2）と3文書の差分検査を実施 |
+| 2026-09-23 | Phase 1完了 | CTestを7件へ拡張し、native artifact、CLI契約、encoding、SDL audio、sanitizer回帰を常設化 | Release／Debug／ASan+UBSan／TSanで全7件成功。VGM wait不整合、fmgen UB、SDL終了raceも修正 |

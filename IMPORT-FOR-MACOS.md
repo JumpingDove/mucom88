@@ -763,8 +763,9 @@ iconvはHomebrew版ではなくCommand Line Tools SDKの`libiconv.tbd`が検出�
 ### 残課題
 
 - x86_64およびUniversal Binaryでの検証
-- CTestはeditor core 1件を常設済み。macOS版の決定性、round trip、format構造、不正MUB/WAV/PCM、
-  ASan/UBSan、TSan試験の追加は未完了。Windows ARM VM用harnessは任意調査用であり先行条件ではない
+- CTestは7件を常設し、macOS版の決定性、round trip、format構造、MUB異常系、CLI契約、SDL dummy、
+  ASan/UBSan、TSanを確認済み。WAV/ADPCM readerの全異常系とfuzzingは今後の追加対象である。
+  Windows ARM VM用harnessは任意調査用であり先行条件ではない
 - process-global `chdir`の完全排除。現実装はtag相対path互換のため処理全体を入力directoryで実行し、
   rhythm directoryへの変更だけを初期化中に限定して必ず復元する
 - install後のdefault data directory、SDL2同梱、`@rpath`、codesign、notarization
@@ -848,8 +849,8 @@ cmake --build build-debug --parallel
 ctest --test-dir build-debug --output-on-failure
 ```
 
-生成物は`build/mucom88`、`build/libmucom88_runtime.a`、test有効時は
-`build/editor_core_test`である。CTestに登録されるtestは現在`editor_core_test` 1件である。
+生成物は`build/mucom88`、`build/libmucom88_runtime.a`、test有効時は`build/tests/`以下のtest executableで
+ある。CTestにはPhase 1完了時点で7件が登録される。
 
 任意のprefixへinstallする場合は次のように指定する。現在のinstall targetはCLI executableのみで、
 `mucompcm.bin`、`voice.dat`、SDL2 dylibの配置はまだ自動化されていない。
@@ -870,9 +871,43 @@ ctest --test-dir build -N
 ctest --test-dir build --output-on-failure
 ```
 
-`editor_core_test`は一時directoryへsample、PCM、voiceを複製して動作し、repositoryのfixtureを
-書き換えない。`sampl1.muc`を文書相対の`voice.dat`と`mucompcm.bin`でcompileし、再生開始・停止まで
-確認する。また、MML保存・compileの前後で`voice.dat`が不変であることを検証する。
+| Test | 主な検証内容 |
+|---|---|
+| `editor_core_test` | document保存、相対resource compile、再生開始・停止、NUL拒否 |
+| `mub_validation_test` | MUB header／range、PCM有無、切断・overflow・不正magic拒否 |
+| `audiobuffer_test` | ring buffer、fractional sample、underflow、drop、frame境界 |
+| `codeconv_test` | CP932／Shift_JIS、UTF-8、半角PCM名、不正byte、短いbuffer |
+| `sdl_audio_lifecycle_test` | SDL dummy deviceの5回open／prefill／play／stop／close |
+| `cli_contract_test` | exit code、stdout／stderr、未対応option、audio非初期化 |
+| `native_regression_test` | sample 1～3二重生成、3 driver、MUB round trip、WAV／VGM／S98構造とhash |
+
+各testは`build/tests/test-work/<test-name>`を専用作業directoryとして使う。native regressionは入力fixtureと
+生成artifactのSHA-256、構造値、build環境を検査・記録し、repository内のsample、PCM、voiceを変更しない。
+Windows生成物との一致は要求しない。
+
+sanitizer buildは通常buildとdirectoryを分離し、native editorを無効にして実行する。
+
+```sh
+cmake -S src -B build-asan \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DBUILD_TESTING=ON \
+  -DMUCOM88_BUILD_MACOS_EDITOR=OFF \
+  -DMUCOM88_ENABLE_ASAN_UBSAN=ON
+cmake --build build-asan --parallel
+ctest --test-dir build-asan --output-on-failure
+
+cmake -S src -B build-tsan \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DBUILD_TESTING=ON \
+  -DMUCOM88_BUILD_MACOS_EDITOR=OFF \
+  -DMUCOM88_ENABLE_TSAN=ON
+cmake --build build-tsan --parallel
+ctest --test-dir build-tsan --output-on-failure
+```
+
+二つのsanitizer optionは同時指定できない。2026-09-23にRelease、Debug、ASan+UBSan、TSanの各構成で
+全7件の成功を確認した。試験導入時に検出したVGM wait値の不整合、fmgenのsigned overflow／未初期化値、
+SDL timer callbackとaudio終了処理のdata raceも修正済みである。
 
 ### 13.4 Makefileによるビルド
 

@@ -16,6 +16,21 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+option(MUCOM88_ENABLE_ASAN_UBSAN
+    "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(MUCOM88_ENABLE_TSAN "Build with ThreadSanitizer" OFF)
+if(MUCOM88_ENABLE_ASAN_UBSAN AND MUCOM88_ENABLE_TSAN)
+    message(FATAL_ERROR
+        "MUCOM88_ENABLE_ASAN_UBSAN and MUCOM88_ENABLE_TSAN are mutually exclusive")
+endif()
+if(MUCOM88_ENABLE_ASAN_UBSAN)
+    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address,undefined)
+elseif(MUCOM88_ENABLE_TSAN)
+    add_compile_options(-fsanitize=thread -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=thread)
+endif()
+
 find_package(SDL2 CONFIG QUIET)
 if(TARGET SDL2::SDL2)
     set(MUCOM88_SDL_TARGET SDL2::SDL2)
@@ -122,9 +137,5 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
-    add_executable(editor_core_test tests/editor_core_test.cpp)
-    target_link_libraries(editor_core_test PRIVATE mucom88_runtime ${MUCOM88_SDL_TARGET})
-    target_compile_definitions(editor_core_test PRIVATE
-        MUCOM88_PROJECT_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/..")
-    add_test(NAME editor_core_test COMMAND editor_core_test)
+    add_subdirectory(tests)
 endif()
