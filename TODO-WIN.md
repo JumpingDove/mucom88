@@ -115,9 +115,31 @@ CTest、release受入試験からは呼び出さない。
 - [x] Windows GUI sourceと同梱文書を仕様参照元として固定する
 - [x] 標準版49項目、拡張profile 2項目、除外2項目へ再分類する
 - [x] 初期MML editorからFM音色editorとWindows plugin ABIを分離する
-- [ ] 下記の各機能IDへ自動試験または手動受入手順を割り当てる
-- [ ] SCCI／外部driver拡張profileのprovider境界と非対応表示を確定する
-- [ ] release note用の非保証事項を定型化する
+- [x] 全53機能IDへ自動試験または手動受入手順を割り当てる
+  （`tests/manual/macos-gui-acceptance.md`）
+- [x] SCCI／外部driver拡張profileのprovider境界と非対応表示を確定する
+  （`docs/MACOS-PROVIDER-CONTRACT.md`）
+- [x] release note用の非保証事項を定型化する
+  （`docs/RELEASE-NOTES-TEMPLATE.md`）
+
+### 受入仕様の割当
+
+| 機能群 | ID数 | 主な自動試験 | 主な手動受入 | 実装Phase |
+|---|---:|---|---|---:|
+| Editor・document | 9 | document、encoding、diagnostic、dirty state | menu、shortcut、window、保存確認 | 3 |
+| Compile・再生 | 11 | playback state、fake clock、driver／resource解決 | transport、実音声、monitor遷移 | 2、4 |
+| Home・browser | 6 | directory列挙、metadata、action dispatch | sidebar、preview、直接再生 | 5 |
+| Player | 4 | playlist、skip、loop、Now Playing | 連続再生と曲切替 | 5 |
+| Sound monitor | 2 | immutable snapshotと11 channel mapping | 実再生中の更新と性能 | 2、5 |
+| Tool・export | 9 | text変換、PCM bank、format parser | preview、save panel、cancel | 6 |
+| Settings・連携・情報 | 12 | settings migration、voice、provider、URL／署名mock | preferences、FM試聴、共有、About | 7、8 |
+
+全53項目は標準版49、拡張profile 2、除外2に対応する。受入手順の割当完了は機能実装の完了を意味しない。
+以下のチェックリストはPhase 3～8にまたがる実装進捗として管理する。
+
+**Phase 0完了日: 2026-09-23**
+
+## GUI機能別実装進捗（Phase 3～8横断）
 
 ### Editor・document
 
@@ -397,3 +419,4 @@ VM導入、Windows CLI比較は先行条件にしない。
 | 2026-09-23 | Phase 3一部実装 | AppKitの`MUCOM88Editor.app`を追加 | 新規、open、UTF-8保存、別名保存、dirty確認、compile、error行表示、ad-hoc署名を確認 |
 | 2026-09-23 | 任意調査基盤 | Windows ARM VM用golden生成harnessを追加 | manifest verifierをsynthetic candidateで確認。Windows実行は未実施 |
 | 2026-09-23 | 方針再構築 | Windows runtime／生成物互換を完了条件から除外し、GUI機能同等化とmacOS native受入へ変更 | 53項目を標準版49、拡張profile 2、除外2へ再分類。VMとWindows goldenをrelease gateから除外 |
+| 2026-09-23 | Phase 0完了 | 全53機能の受入手順、実chip／外部driverのprovider契約、release note雛形を確定 | 受入仕様の件数検査（標準49、拡張2、除外2）と3文書の差分検査を実施 |

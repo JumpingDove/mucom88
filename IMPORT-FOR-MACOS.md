@@ -273,7 +273,7 @@ Windows 専用 directory と bundled DirectX SDK (`src/lib`) は macOS target �
 最低限、次を arm64 と x86_64 で自動化する。
 
 1. `package/sampl1.muc`～`sampl3.muc` の compile 成否
-2. 生成 MUB の byte-for-byte golden test（意図的な header version 差は明示）
+2. 生成 MUB のmacOS版内での決定性検査と再読込・再生（header／sectionも独立検査）
 3. 生成 WAV の RIFF field、長さ、sample hash
 4. MUB → PCM rendering の deterministic hash
 5. Shift_JIS/UTF-8 の日本語 tag、error、voice/PCM name
@@ -349,7 +349,7 @@ file の install location と探索規則を決める必要がある。
 対象: `adpcm.*`、dummy backend、codeconv、CMake、CLI path/argument。
 
 完了条件: clean checkout から Apple clang で warning を把握可能な形で build でき、音声 device
-なしで三つの sample を MUB/WAV/VGM/S98 に変換し、golden/hash test が通る。
+なしで三つの sample を MUB/WAV/VGM/S98 に変換し、macOS native regressionと構造検査が通る。
 
 ### Phase B: SDL2 realtime player
 
@@ -373,7 +373,7 @@ underrun count と sanitizer test に既知の data race がない。
 ## 10. 現時点で未確認の事項
 
 - Windows固定binaryとmacOS版が生成するMUB/WAV/VGM/S98の厳密なbyte・構造・PCM sample比較。
-  Windows ARM VM用の生成・決定性検査・manifest検証基盤は実装済みだが、VMでの正式golden生成は未実施
+  Windows ARM VM用harnessは任意調査用であり、標準版の完了条件およびrelease gateには含めない
 - Intel Mac 実機または Rosetta での動作
 - 実際の audio device での長時間再生、latency、underrun
 - 日本語を含む実用 MML 一式での CP932/Shift_JIS/UTF-8 round trip
@@ -381,9 +381,9 @@ underrun count と sanitizer test に既知の data race がない。
 - sandboxed `.app`、署名、notarization
 - 外部 plugin および real chip（現状 macOS 実装なし）
 
-従って「コアは arm64 で動く見込みが高い」ことまでは実証済みだが、「互換な macOS 製品が
-完成している」とはまだ言えない。最初の変更セットは Phase A に限定し、golden test で
-Windows 互換性を固定してから realtime/GUI へ進むのが最も安全である。
+従って「コアは arm64 で動く見込みが高い」ことまでは実証済みだが、GUI機能、長時間audio、配布まで含む
+macOS製品が完成しているとはまだ言えない。以後は`TODO-WIN.md`の53機能受入仕様とmacOS native regressionを
+完了判定に用いる。Windows比較は仕様理解を補助する任意調査とし、実装の先行条件にしない。
 
 ## 11. macOS CLI 初期移植の具体案
 
@@ -763,8 +763,8 @@ iconvはHomebrew版ではなくCommand Line Tools SDKの`libiconv.tbd`が検出�
 ### 残課題
 
 - x86_64およびUniversal Binaryでの検証
-- CTestはeditor core 1件を常設済み。Windows ARM VM用golden生成harnessは追加済みだが、正式artifactの
-  取込みとmacOS CLI比較test、不正MUB/WAV/PCM、ASan/UBSan、TSan試験の追加は未完了
+- CTestはeditor core 1件を常設済み。macOS版の決定性、round trip、format構造、不正MUB/WAV/PCM、
+  ASan/UBSan、TSan試験の追加は未完了。Windows ARM VM用harnessは任意調査用であり先行条件ではない
 - process-global `chdir`の完全排除。現実装はtag相対path互換のため処理全体を入力directoryで実行し、
   rhythm directoryへの変更だけを初期化中に限定して必ず復元する
 - install後のdefault data directory、SDL2同梱、`@rpath`、codesign、notarization
@@ -1227,6 +1227,9 @@ ad-hoc署名、CTestを検証した。Launch Servicesからappを起動し、`pa
 
 ## 18. Windows ARM VMでの機能比較golden生成
 
+この章のharnessは任意の比較調査用である。2026-09-23に確定したPhase 0以降、Windowsでの実行、生成hashの
+一致、Windowsへの生成file互換は、macOS標準版の機能同等化やreleaseの完了条件に含めない。
+
 ### 18.1 目的と実装範囲
 
 Windows版との機能同等性を固定するため、Apple Silicon上のWindows 11 ARM64 24H2 VMで、固定済みの
@@ -1286,13 +1289,13 @@ cmake \
 raw logをreviewする。搬出前後の`manifest.sha256`一致も確認し、Windowsまたはhypervisor更新後に結果が
 変化した場合は既存baselineを上書きせず、別baselineとして原因を調査する。
 
-### 18.4 現在の状態と完了条件
+### 18.4 現在の状態と任意調査の完了条件
 
 固定fixtureのsize/SHA-256はmacOS上で再確認済みであり、`verify-manifest.cmake`はsynthetic candidateを
 用いた検証に成功している。一方、このMacにはWindows ARM VM/hypervisorおよびPowerShell実行環境がないため、
 Windows binaryによる実artifact生成、PowerShell scriptのWindows上での実行確認、golden hashの確定は
 未実施である。
 
-この作業の完了条件は、固定VM snapshotで二重生成を成功させ、全artifactの決定性と構造をreviewし、
-搬出したcandidateのmanifest検証に成功した上で、採用したartifact、hash、VM metadataを`TODO-WIN.md`へ
-記録することである。その後、macOS CLIの出力と比較するCTestを追加する。
+この任意調査を実施する場合の完了条件は、固定VM snapshotで二重生成を成功させ、全artifactの決定性と構造を
+reviewし、搬出したcandidateのmanifest検証に成功した上で、artifact、hash、VM metadataを記録することである。
+結果は参考情報として扱い、標準CTestへ必須のWindows比較として追加しない。
