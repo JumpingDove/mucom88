@@ -372,7 +372,8 @@ underrun count と sanitizer test に既知の data race がない。
 
 ## 10. 現時点で未確認の事項
 
-- Windows 公式 binary と生成 MUB/WAV の厳密な byte/sample 比較
+- Windows固定binaryとmacOS版が生成するMUB/WAV/VGM/S98の厳密なbyte・構造・PCM sample比較。
+  Windows ARM VM用の生成・決定性検査・manifest検証基盤は実装済みだが、VMでの正式golden生成は未実施
 - Intel Mac 実機または Rosetta での動作
 - 実際の audio device での長時間再生、latency、underrun
 - 日本語を含む実用 MML 一式での CP932/Shift_JIS/UTF-8 round trip
@@ -762,7 +763,8 @@ iconvはHomebrew版ではなくCommand Line Tools SDKの`libiconv.tbd`が検出�
 ### 残課題
 
 - x86_64およびUniversal Binaryでの検証
-- CTestはeditor core 1件を常設済み。CLI golden、不正MUB/WAV/PCM、ASan/UBSan、TSan試験の追加
+- CTestはeditor core 1件を常設済み。Windows ARM VM用golden生成harnessは追加済みだが、正式artifactの
+  取込みとmacOS CLI比較test、不正MUB/WAV/PCM、ASan/UBSan、TSan試験の追加は未完了
 - process-global `chdir`の完全排除。現実装はtag相対path互換のため処理全体を入力directoryで実行し、
   rhythm directoryへの変更だけを初期化中に限定して必ず復元する
 - install後のdefault data directory、SDL2同梱、`@rpath`、codesign、notarization
@@ -1222,3 +1224,75 @@ GUIで保存したMUCを再生する場合はrepository top directoryから次�
 ad-hoc署名、CTestを検証した。Launch Servicesからappを起動し、`package/sampl1.muc`の本文表示、
 文書相対`voice.dat`/`mucompcm.bin`を使ったcompile成功、message paneへの結果表示を確認した。
 `editor_core_test`も1件成功している。再生機能はこのGUI検証の対象外である。
+
+## 18. Windows ARM VMでの機能比較golden生成
+
+### 18.1 目的と実装範囲
+
+Windows版との機能同等性を固定するため、Apple Silicon上のWindows 11 ARM64 24H2 VMで、固定済みの
+MUCOM88 Windows 0.70 PE32/x86 binaryからMUB、WAV、VGM、S98を生成するharnessを追加した。
+macOS上でWindows binaryを代替実行してgoldenを作る仕組みではなく、Windows on Armのx86
+user-mode emulationで公式package binaryを実行し、その結果をmacOSへ搬出する方式である。
+
+実装の入口は次のdirectoryにある。
+
+```text
+tests/reference/windows-arm64-vm/mucom88-win-0.70/
+  README.md
+  generate-golden.ps1
+  verify-manifest.cmake
+```
+
+`generate-golden.ps1`は、固定入力7fileのsize/SHA-256、`mucom88.exe`のPE32/x86 machine type、
+Windows 11 ARM64 24H2、日本語system locale、code page 932を事前検査する。driverとPCM条件を分けた
+7 caseを各2回`run-a`/`run-b`へ生成し、全artifactのsizeとSHA-256が一致した場合だけ`candidate/`を
+作成する。MUB section、WAV format/PCM data、VGM/S98 header/command領域の構造値に加え、実行command、
+終了code、変換しないraw stdout/stderr、host/guest/hypervisor情報を保存する。
+
+### 18.2 Windows VMでの生成
+
+repositoryと出力先はshared folderではなく、ASCIIのみ・空白なしのVM内NTFS pathを使用する。
+PowerShellから次の形式で実行する。実際の環境値とsnapshot名を指定し、既存の`OutputRoot`は使用しない。
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File C:\mucom88-golden\repo\tests\reference\windows-arm64-vm\mucom88-win-0.70\generate-golden.ps1 `
+  -RepositoryRoot C:\mucom88-golden\repo `
+  -OutputRoot C:\mucom88-golden\work-20260923 `
+  -Hypervisor "<product>" `
+  -HypervisorVersion "<version>" `
+  -SnapshotName "<snapshot>" `
+  -HostMacModel "<model>" `
+  -HostSoc "<Apple SoC>" `
+  -HostMacOS "<version/build>"
+```
+
+正式goldenでは環境不一致を許容するoptionを使用しない。詳細な前提、case matrix、review項目は同directoryの
+`README.md`を正とする。
+
+### 18.3 macOSへの搬出と検証
+
+生成された`candidate/`をmacOSへcopyした後、repository top directoryで次を実行する。
+
+```sh
+cmake \
+  -DCANDIDATE_DIR=/path/to/work-20260923/candidate \
+  -P tests/reference/windows-arm64-vm/mucom88-win-0.70/verify-manifest.cmake
+```
+
+検証では`environment.json`、`inputs.json`、`determinism.json`、`manifest.json`、全caseの終了codeと
+raw logをreviewする。搬出前後の`manifest.sha256`一致も確認し、Windowsまたはhypervisor更新後に結果が
+変化した場合は既存baselineを上書きせず、別baselineとして原因を調査する。
+
+### 18.4 現在の状態と完了条件
+
+固定fixtureのsize/SHA-256はmacOS上で再確認済みであり、`verify-manifest.cmake`はsynthetic candidateを
+用いた検証に成功している。一方、このMacにはWindows ARM VM/hypervisorおよびPowerShell実行環境がないため、
+Windows binaryによる実artifact生成、PowerShell scriptのWindows上での実行確認、golden hashの確定は
+未実施である。
+
+この作業の完了条件は、固定VM snapshotで二重生成を成功させ、全artifactの決定性と構造をreviewし、
+搬出したcandidateのmanifest検証に成功した上で、採用したartifact、hash、VM metadataを`TODO-WIN.md`へ
+記録することである。その後、macOS CLIの出力と比較するCTestを追加する。

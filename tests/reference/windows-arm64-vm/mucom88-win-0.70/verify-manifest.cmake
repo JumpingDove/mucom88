@@ -1,0 +1,56 @@
+cmake_minimum_required(VERSION 3.20)
+
+if(NOT DEFINED CANDIDATE_DIR OR CANDIDATE_DIR STREQUAL "")
+    message(FATAL_ERROR
+        "Set -DCANDIDATE_DIR=<golden candidate directory> before -P")
+endif()
+
+cmake_path(ABSOLUTE_PATH CANDIDATE_DIR NORMALIZE OUTPUT_VARIABLE candidate)
+set(manifest "${candidate}/manifest.sha256")
+if(NOT EXISTS "${manifest}")
+    message(FATAL_ERROR "Manifest does not exist: ${manifest}")
+endif()
+
+file(STRINGS "${manifest}" lines ENCODING UTF-8)
+set(verified 0)
+foreach(line IN LISTS lines)
+    if(line STREQUAL "")
+        continue()
+    endif()
+    if(NOT line MATCHES "^([0-9A-Fa-f]+)  (.+)$")
+        message(FATAL_ERROR "Invalid manifest line: ${line}")
+    endif()
+    set(expected "${CMAKE_MATCH_1}")
+    set(relative "${CMAKE_MATCH_2}")
+    string(LENGTH "${expected}" hash_length)
+    if(NOT hash_length EQUAL 64)
+        message(FATAL_ERROR "Invalid SHA-256 length for ${relative}")
+    endif()
+    if(IS_ABSOLUTE "${relative}" OR relative MATCHES "(^|/)\\.\\.(/|$)")
+        message(FATAL_ERROR "Unsafe manifest path: ${relative}")
+    endif()
+    set(path "${candidate}/${relative}")
+    if(NOT EXISTS "${path}")
+        message(FATAL_ERROR "Manifest entry is missing: ${path}")
+    endif()
+    file(SHA256 "${path}" actual)
+    string(TOLOWER "${expected}" expected)
+    string(TOLOWER "${actual}" actual)
+    if(NOT actual STREQUAL expected)
+        message(FATAL_ERROR
+            "SHA-256 mismatch for ${relative}: expected ${expected}, got ${actual}")
+    endif()
+    math(EXPR verified "${verified} + 1")
+endforeach()
+
+if(verified EQUAL 0)
+    message(FATAL_ERROR "Manifest contains no entries: ${manifest}")
+endif()
+if(NOT EXISTS "${candidate}/manifest.json" OR
+   NOT EXISTS "${candidate}/environment.json" OR
+   NOT EXISTS "${candidate}/inputs.json" OR
+   NOT EXISTS "${candidate}/determinism.json")
+    message(FATAL_ERROR "Candidate metadata is incomplete: ${candidate}")
+endif()
+
+message(STATUS "Verified ${verified} golden candidate files in ${candidate}")
