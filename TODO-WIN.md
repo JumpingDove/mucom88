@@ -386,6 +386,8 @@ golden値ではない。生成結果は別のPhase 0項目でWindows ARM VMと�
 - [x] WAV、VGM、S98のoffline出力経路が存在する
 - [x] PCM、voice、tag、外部ROM、rhythm dataを扱うCLI経路が存在する
 - [x] Ctrl-Cによる通常終了経路が存在する
+- [x] `miniplay`のMUC compileをSTEP modeで実行し、compile中に再生用とは別のaudio deviceと
+  timerを起動しない
 
 上記は機能経路の存在を示すもので、Windows版との完全一致を保証するものではない。
 
@@ -402,6 +404,10 @@ golden値ではない。生成結果は別のPhase 0項目でWindows ARM VMと�
 - [ ] `pcmtool`をmacOS buildへ統合し、Windows ARM VMの変換結果と比較する
 - [ ] `miniplay`を正式なCMake targetにし、入出力pathと終了条件を整理する
 - [ ] CLIのdriver、PCM、voice、export optionを利用者向けに文書化する
+
+`miniplay`のcompile/play option分離と終了時のthread停止は実装済みだが、CMake target化、
+曲末尾での自動終了、実deviceでの長時間再生は未完了である。このため上記のCMake target・終了条件
+項目は完了扱いにしない。
 
 ### 完了条件
 
@@ -438,6 +444,12 @@ Windows GUIは `hspplugin/hspmucom.cpp` を経由してコアを操作する。m
 - `#voice`と`#pcm`の相対pathは文書のresource directoryから解決し、process-wide `chdir()`を使用しない
 - editor serviceでは一時音色fileを読まず、`voice.dat`を読み取り専用として扱う
 - serviceは同時呼出しを許可せず、GUI側の直列workerから使用する。非同期job管理とcancelは未実装
+- `MucomModule`はVM初期化optionとcompiler optionを分離し、compile用VMをSTEP modeで動作させる
+- `AudioSdl`は音声生成用threadを所有し、終了要求後にthreadをjoinしてからSDL audio deviceと
+  subsystemを破棄する
+
+上記のthread所有権は現在`miniplay`の`AudioSdl`に限定される。将来のGUI transport、
+`OsDependentSdl`、非同期compile jobを含む共通のlifetime規約は引き続き未完了である。
 
 ### 完了条件
 
@@ -492,6 +504,10 @@ immutableなcompile requestを作成する。
 
 ## Phase 4: Audio deviceと再生制御
 
+- [x] `miniplay`の周期的な音声生成処理を終了時にjoin可能なthreadとして所有し、解放済みobjectへの
+  timer callbackを防止する
+- [-] `sampl1.muc`の起動とCtrl-C停止をSDL dummy deviceで反復検証する（60回連続成功。実device、
+  長時間、曲切替は未検証）
 - [ ] `WaitSendingAudio()`にdrainまたはflushの明確な意味を定義して実装する
 - [ ] backendのread量、write量、pool量、総sample数などを取得できるようにする
 - [ ] 出力deviceを列挙・選択できるようにする
@@ -501,6 +517,8 @@ immutableなcompile requestを作成する。
 - [ ] latencyとbuffer設定を公開する必要性を判断する
 - [ ] 長時間再生、PCM再生、曲切替、終了時のclick noiseを試験する
 - [ ] underrun、dropped sample、再充填回数を診断情報として取得できるようにする
+- [ ] `AudioSdl`の10 ms生成threadについて、高負荷時のscheduler遅延、underrun、tempo、終了待ち時間を
+  長時間試験する
 - [ ] SDL2で要件を満たせない場合にのみCoreAudio native backendを検討する
 
 ### 完了条件
@@ -644,3 +662,4 @@ macOSから直接利用可能な公開protocolと検証用hardwareを確保で�
 | 2026-09-21 | Phase 0一部完了 | Windows GUIを操作単位で53項目に分解し、必須・任意・廃止候補へ分類 | `mucom88win.hsp`、`mod_mucom88.as`、`aplayer.hsp`、`vplayer.hsp`、`package/readme.txt`を照合 |
 | 2026-09-21 | 方針変更 | Windows比較をApple Silicon上のWindows 11 ARM64 VMだけで進める方式へ変更。x86 emulation結果を機能比較基準とし、x64固有性能とARM64 driverのない実chipを完了条件から除外 | Windows componentがPE32/x86であること、Windows on Armのuser-mode emulation範囲、projectのSCCI2依存を確認 |
 | 2026-09-21 | Phase 2/3一部実装 | macOS初期MML editorからFM音色editor/pluginを分離。text-onlyの`MmlDocument`、snapshot compile用`MucomCompileService`、文書相対resource解決、voice read-only modeを追加 | `editor_core_test`で`sampl1.muc`の文書相対voice/PCM compile・再生開始・停止、MML保存前後の`voice.dat`不変、旧一時音色fileの無視、dirty状態、NUL拒否を確認 |
+| 2026-09-23 | Phase 1/2/4一部完了 | `MucomModule`のVM optionとcompiler optionを分離し、compile時の不要なSDL audio/timer初期化を廃止。`AudioSdl`の生成処理をjoin可能なthreadへ移し、停止後にaudio deviceを破棄する順序へ変更 | SDL dummy deviceで`sampl1.muc`の起動・Ctrl-C停止を60回連続実行し、crash/hang 0件。生成MUBは65,647 byte、SHA-256 `52116e8284f0e29d0de050b984926d6ca9da60e88cb1cb1b46d4ab586f31e309`で全回一致。`make mini test all`、`dep_test`、CTest 1件が成功。実deviceは試験環境でdefault deviceを取得できず未検証 |

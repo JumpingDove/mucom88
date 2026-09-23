@@ -3,9 +3,10 @@
 #include "audiosdl.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
-#include <mutex>
+#include <exception>
 
 #define PULSE_MAX 100
 #define PULSE_VALUE 10000
@@ -18,7 +19,6 @@
 #define TIMER_INTERVAL 10
 
 static void SdlAudioCallback(void *param, Uint8 *data, int len);
-static Uint32 SdlTimerCallback(Uint32 interval, void *param);
 
 AudioSdl::AudioSdl()
     : Buffer(new AudioBuffer(AUDIO_CHANNELS, AUDIO_BUFFER_SIZE, AUDIO_BUFFER_BLOCK)),
@@ -27,7 +27,6 @@ AudioSdl::AudioSdl()
       UserAudioCallback(new AudioCallback),
       AudioDevice(0),
       AudioDeviceStarted(false),
-      TimerId(0),
       InitializedSubsystems(0),
       ShuttingDown(true)
 {
@@ -66,10 +65,6 @@ bool AudioSdl::Open(int rate)
 {
     if (AudioOpenFlag) return true;
     if (!InitSubsystem(SDL_INIT_AUDIO)) return false;
-    if (!InitSubsystem(SDL_INIT_TIMER)) {
-        QuitSubsystems();
-        return false;
-    }
 
     Buffer->Reset();
     Buffer->SetRate(rate);
@@ -117,14 +112,7 @@ bool AudioSdl::Open(int rate)
 void AudioSdl::Close()
 {
     ShuttingDown.store(true, std::memory_order_release);
-    if (TimerId != 0) {
-        SDL_RemoveTimer(TimerId);
-        TimerId = 0;
-    }
-    {
-        // Wait for a timer callback that was already running when it was removed.
-        std::lock_guard<std::mutex> lock(TimerCallbackMutex);
-    }
+    if (TimerThread.joinable()) TimerThread.join();
     if (AudioDevice != 0) {
         if (AudioDeviceStarted) SDL_PauseAudioDevice(AudioDevice, 1);
         SDL_CloseAudioDevice(AudioDevice);
@@ -139,24 +127,27 @@ void AudioSdl::Close()
 bool AudioSdl::InitAudioTimer()
 {
     Time->ResetTick();
-    TimerId = SDL_AddTimer(TIMER_INTERVAL, SdlTimerCallback, this);
-    if (TimerId == 0) {
-        std::fprintf(stderr, "SDL audio timer creation failed: %s\n", SDL_GetError());
+    try {
+        TimerThread = std::thread(&AudioSdl::AudioTimerMain, this);
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "Audio timer thread creation failed: %s\n", error.what());
         return false;
     }
     return true;
 }
 
-// タイマー
-static Uint32 SdlTimerCallback(Uint32 interval, void *param) {
-    AudioSdl *inst = static_cast<AudioSdl *>(param);
-    return inst->UpdateAudioTimer() ? interval : 0;
+void AudioSdl::AudioTimerMain()
+{
+    while (!ShuttingDown.load(std::memory_order_acquire)) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(TIMER_INTERVAL));
+        if (ShuttingDown.load(std::memory_order_acquire)) break;
+        if (!UpdateAudioTimer()) return;
+    }
 }
 
 // オーディオ更新
 bool AudioSdl::UpdateAudioTimer()
 {
-    std::lock_guard<std::mutex> callbackLock(TimerCallbackMutex);
     if (ShuttingDown.load(std::memory_order_acquire)) return false;
 
     const bool sending = Buffer->IsSending();

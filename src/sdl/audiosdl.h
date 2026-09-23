@@ -3,7 +3,7 @@
 
 #include <SDL.h>
 #include <atomic>
-#include <mutex>
+#include <thread>
 
 #include "audiobuffer.h"
 #include "audiotime.h"
@@ -34,13 +34,13 @@ private:
     bool InitSubsystem(Uint32 flags);
     void QuitSubsystems();
     bool InitAudioTimer();
+    void AudioTimerMain();
 
     SDL_AudioDeviceID AudioDevice;
     bool AudioDeviceStarted;
-    SDL_TimerID TimerId;
     Uint32 InitializedSubsystems;
     std::atomic<bool> ShuttingDown;
-    std::mutex TimerCallbackMutex;
+    std::thread TimerThread;
 };
 
 #endif

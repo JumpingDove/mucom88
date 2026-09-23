@@ -48,9 +48,16 @@ bool MucomModule::Open(const char *workingDirectory, const char *songFilename) {
     return false;
   }
   mucom = new CMucom();
-  int cmpopt = MUCOM_CMPOPT_COMPILE;
-  mucom->Init(NULL,cmpopt,audioRate);
-  mucom->Reset(cmpopt);
+  const int compileOptions = MUCOM_CMPOPT_COMPILE;
+  // CMucom::Init() accepts VM options, not compiler options.  Keep the
+  // compiler VM in step mode so opening a source file does not create a
+  // second SDL audio device and timer behind miniplay's AudioSdl instance.
+  if (!mucom->Init(NULL, MUCOM_OPTION_STEP, audioRate)) {
+    AddResultBuffer("#Unable to initialize MUCOM for compilation.\r\n");
+    FreeMucom();
+    return false;
+  }
+  mucom->Reset(compileOptions);
   if (pcmfile && mucom->LoadPCM(pcmfile) != 0) {
     AddResultBuffer(GetMucomMessage());
     FreeMucom();
@@ -70,8 +77,11 @@ bool MucomModule::Open(const char *workingDirectory, const char *songFilename) {
 
   // 再生用に再度準備
   mucom = new CMucom();
-  cmpopt = MUCOM_CMPOPT_STEP;
-  mucom->Init(NULL,cmpopt,audioRate);
+  if (!mucom->Init(NULL, MUCOM_OPTION_STEP, audioRate)) {
+    AddResultBuffer("#Unable to initialize MUCOM for playback.\r\n");
+    FreeMucom();
+    return false;
+  }
   mucom->Reset(0);
   if (mucom->LoadMusic(outfile) < 0) {
       AddResultBuffer(GetMucomMessage());
