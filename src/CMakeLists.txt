@@ -79,6 +79,47 @@ target_link_libraries(mucom88 PRIVATE mucom88_runtime ${MUCOM88_SDL_TARGET})
 
 install(TARGETS mucom88 RUNTIME DESTINATION bin)
 
+if(APPLE)
+    option(MUCOM88_BUILD_MACOS_EDITOR "Build the native macOS MML editor" ON)
+    option(MUCOM88_ADHOC_SIGN_EDITOR
+        "Apply an ad-hoc signature to the development editor bundle" ON)
+else()
+    set(MUCOM88_BUILD_MACOS_EDITOR OFF)
+endif()
+
+if(APPLE AND MUCOM88_BUILD_MACOS_EDITOR)
+    enable_language(OBJCXX)
+
+    add_executable(mucom88_editor MACOSX_BUNDLE
+        editor/macos/mucom_editor.mm
+    )
+    target_compile_options(mucom88_editor PRIVATE -fobjc-arc)
+    target_link_libraries(mucom88_editor PRIVATE
+        mucom88_runtime
+        "-framework AppKit"
+    )
+    set_target_properties(mucom88_editor PROPERTIES
+        OUTPUT_NAME "MUCOM88Editor"
+        MACOSX_BUNDLE_BUNDLE_NAME "MUCOM88 Editor"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "org.mucom88.editor"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_BUNDLE_VERSION "1"
+        MACOSX_BUNDLE_INFO_PLIST
+            "${CMAKE_CURRENT_SOURCE_DIR}/editor/macos/Info.plist.in"
+    )
+
+    if(MUCOM88_ADHOC_SIGN_EDITOR)
+        add_custom_command(TARGET mucom88_editor POST_BUILD
+            COMMAND /usr/bin/codesign --force --deep --sign -
+                "$<TARGET_BUNDLE_DIR:mucom88_editor>"
+            COMMENT "Applying ad-hoc signature to MUCOM88Editor.app"
+            VERBATIM
+        )
+    endif()
+
+    install(TARGETS mucom88_editor BUNDLE DESTINATION .)
+endif()
+
 include(CTest)
 if(BUILD_TESTING)
     add_executable(editor_core_test tests/editor_core_test.cpp)

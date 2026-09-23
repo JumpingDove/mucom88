@@ -10,13 +10,13 @@
 初期調査時に確認した`xcode/miniosx`は、2019年頃のSDL 1.2/i386/macOS 10.6用projectが
 途中の状態で残ったものであり、現在も正規buildには使用しない。一方、`src/CMakeLists.txt`と
 `src/Makefile`の初期CLI移植上の不整合は修正済みで、現在はCMakeを正規build入口として
-Apple Silicon上のRelease/Debug build、CLI、editor core testを実行できる。
+Apple Silicon上のRelease/Debug build、CLI、editor core test、およびAppKit版MML editorを実行できる。
 
 推奨する到達順は次の通り。
 
 1. arm64 CLI（コンパイル、MUB再生、WAV/VGM/S98書き出し）とSDL2再生（実装済み）
 2. MML document/compile serviceと自動試験の拡充（一部実装済み）
-3. macOS native GUI、`pcmtool`、配布物の整備
+3. macOS native GUI（一部実装済み）、`pcmtool`、配布物の整備
 4. 必要性を確認した場合のみFM音色editor、plugin、実chip対応
 
 Windows GUI、HSP プラグイン、FM Tone Editor、SCCI2 は Win32 API に強く依存するため、
@@ -25,7 +25,7 @@ CLI 移植とは別プロジェクト相当の作業になる。
 ## 2. 調査基準
 
 - 初期調査時点: 2026-09-12
-- 最終更新: 2026-09-22
+- 最終更新: 2026-09-23
 - 対象コミット: `bf008a4` (`trial-import-for-macOS`、調査時の HEAD)
 - 実機: Apple Silicon (`arm64`)、macOS 26.6.2、Apple clang 21.0.0
 - 現行build環境: Command Line Tools、CMake 4.4.3、Homebrew SDL2-compat 2.32.72、macOS SDK iconv
@@ -1123,3 +1123,102 @@ SDL dummy driverではbuffer制御と終了経路を確認できるが、実際�
 - Makefileはcompile/linkの両方へ`-mmacosx-version-min=26.0`を渡す
 - Makefileの値は`make MACOSX_DEPLOYMENT_TARGET=<version>`で上書きできる
 - この決定は古いmacOSでの互換性を保証しない。対応範囲を広げる場合は、対象OS・SDK・SDL2で改めて検証する
+
+## 17. macOS MML editorのbuildと起動
+
+### 17.1 実装済み範囲
+
+AppKitとObjective-C++で実装したnative document applicationを、CMake target
+`mucom88_editor`から`MUCOM88Editor.app`として生成する。full Xcode projectやSwift packageは不要で、
+Command Line Tools環境でbuildできる。UIは既存の`MmlDocument`と`MucomCompileService`を使用し、
+Windows HSP GUI、FM音色editor、pluginとは分離している。
+
+初期実装で利用できる機能は次の通り。
+
+- 新規文書、MUCを開く、保存、別名保存、未保存文書を閉じる際の標準確認
+- monospaced fontの複数行MML編集、Undo/Redo、Cut/Copy/Paste
+- window titleへのfile名表示と`.muc` document typeの登録
+- `Compile` buttonまたはCommand-Rによる編集中snapshotのcompile
+- compile messageの表示、失敗時の先頭diagnostic行選択
+- MUCと同じdirectoryを基準にした`#voice`および`#pcm`相対pathの解決
+
+### 17.2 `.app`のbuild
+
+repository top directoryから次を実行する。macOSでは`MUCOM88_BUILD_MACOS_EDITOR`が既定で`ON`である。
+
+```sh
+cmake -S src -B build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TESTING=ON \
+  -DMUCOM88_BUILD_MACOS_EDITOR=ON
+cmake --build build --target mucom88_editor --parallel
+```
+
+成果物は`build/MUCOM88Editor.app`である。development buildではCMakeのpost-build処理がad-hoc署名を
+適用する。署名を別工程で行う場合はconfigure時に`-DMUCOM88_ADHOC_SIGN_EDITOR=OFF`を指定する。
+
+appを含む全targetと回帰試験を実行する場合は次の通り。
+
+```sh
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
+
+bundle、architecture、署名は次のcommandで確認できる。
+
+```sh
+plutil -lint build/MUCOM88Editor.app/Contents/Info.plist
+file build/MUCOM88Editor.app/Contents/MacOS/MUCOM88Editor
+codesign --verify --deep --strict --verbose=2 build/MUCOM88Editor.app
+```
+
+### 17.3 起動とMUC fileのopen
+
+新規文書で起動する。
+
+```sh
+open "$PWD/build/MUCOM88Editor.app"
+```
+
+既存MUCを直接開く場合はappとfileを指定する。
+
+```sh
+open -a "$PWD/build/MUCOM88Editor.app" "$PWD/package/sampl1.muc"
+```
+
+一度Launch Servicesへ登録された後はbundle identifierでも開ける。
+
+```sh
+open -b org.mucom88.editor "$PWD/package/sampl1.muc"
+```
+
+Finderからは`MUCOM88Editor.app`を起動してFile > Openを使う。開発用bundleを`/Applications`へ
+copyしなくても上記commandで起動できる。`open`は起動要求後にterminalへ戻る。対して
+`build/MUCOM88Editor.app/Contents/MacOS/MUCOM88Editor`を直接実行すると、GUI processが終了するまで
+terminalが待機するが、hangではなく通常のforeground process動作である。
+
+MUCを保存してから`Compile`を押す。未保存の新規文書はresource directoryを確定できないため、
+先に保存するようstatusへ表示する。compileはfileへ再保存した内容ではなく、editor上の最新text snapshotを
+使用する。`#voice`と`#pcm`の相対pathは保存先MUCと同じdirectoryから解決する。
+
+### 17.4 現在の制約
+
+- 読み書きできる文書encodingはUTF-8のみ。CP932/Shift_JISの自動判定と元encodingへのround tripは未実装
+- compileは現状UI thread上で同期実行する。大きな文書向けのworker、progress、cancelは未実装
+- GUIからの再生、停止、音量、monitor、WAV/VGM/S98 exportは未実装。再生は引き続きCLIを使用する
+- `.muc`以外のN88-BASIC source、MUB、drag and drop、autosave/recovery、検索、行番号gutterは未実装
+- sandbox、security-scoped bookmark、app icon、Developer ID署名、notarizationは未実装
+- bundleはHomebrewのSDL2-compat dylibを参照する開発用成果物であり、別Macへそのまま配布できる形ではない
+
+GUIで保存したMUCを再生する場合はrepository top directoryから次を実行する。
+
+```sh
+./build/mucom88 path/to/song.muc
+```
+
+### 17.5 実機検証結果
+
+2026-09-23にApple Silicon/macOS 26.6.2上でDebug bundleをbuildし、Info.plist、arm64 Mach-O、
+ad-hoc署名、CTestを検証した。Launch Servicesからappを起動し、`package/sampl1.muc`の本文表示、
+文書相対`voice.dat`/`mucompcm.bin`を使ったcompile成功、message paneへの結果表示を確認した。
+`editor_core_test`も1件成功している。再生機能はこのGUI検証の対象外である。

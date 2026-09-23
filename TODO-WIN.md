@@ -26,7 +26,7 @@ macOS版MUCOM88をWindows版と比較し、機能同等化に必要な作業、�
 | レベル | 対象 | 現状 |
 |---|---|---|
 | Level 1 | CLIのコンパイル、再生、各種ファイル出力 | 一部達成。厳密なWindows比較が未完了 |
-| Level 2 | 通常のGUI編集・再生ワークフロー | 文書・compile service基礎を一部実装。GUIは未着手 |
+| Level 2 | 通常のGUI編集・再生ワークフロー | AppKit版の編集・保存・compile GUIまで一部実装。再生は未着手 |
 | Level 3 | FM音色エディタ、PCMツール、MIDI、モニター | 未着手または部分実装 |
 | Level 4 | プラグイン、実チップ、外部ドライバ | 未着手。user-mode機能を優先し、実チップは条件付き |
 
@@ -429,7 +429,7 @@ Windows GUIは `hspplugin/hspmucom.cpp` を経由してコアを操作する。m
 - [-] PCM、voice、tag、UUID、driver optionのAPIを定義する
 - [-] compile結果、error、現在行、再生状態を取得できるようにする
 - [ ] channel状態と音源状態をsnapshotとして取得できるようにする
-- [-] MML text更新、保存要求、editor要求をUI非依存のeventへ整理する
+- [-] MML text更新、保存要求、editor要求をUI非依存のeventへ整理する（AppKit文書から`MmlDocument`を使用）
 - [ ] voice取得、更新、保存、dumpのAPIを定義する（初期版は読み取り専用voice参照だけを使用）
 - [ ] WAV、VGM、S98出力をGUIから安全に実行できるAPIを定義する
 - [-] object寿命、thread、callback、memory所有権を明文化する
@@ -463,24 +463,25 @@ Windows HSP画面を直接移植せず、SwiftUI/AppKitなどmacOSで保守可�
 
 ### Documentとeditor
 
-- [-] 新規作成、開く、保存、別名保存を実装する
-- [ ] 未保存変更の確認、autosave、crash後の復旧を実装する
-- [ ] MUC/MUBのFinder関連付け、drag and drop、最近使ったfileを実装する
-- [ ] MML editor、行番号、検索、compile error行への移動を実装する
+- [x] 新規作成、開く、保存、別名保存を実装する
+- [-] 未保存変更の確認、autosave、crash後の復旧を実装する（標準の未保存確認のみ実装）
+- [-] MUC/MUBのFinder関連付け、drag and drop、最近使ったfileを実装する（MUC document typeのみ登録）
+- [-] MML editor、行番号、検索、compile error行への移動を実装する（編集と先頭error行選択のみ実装）
 - [ ] 日本語入力、CP932/UTF-8変換、macOSのUnicode正規化を検証する
 - [ ] sandboxを採用する場合はsecurity-scoped bookmarkで外部dataを保持する
 
-`MmlDocument`によるbyte保持の読込、保存、別名保存、dirty判定は実装済み。現時点では
-AppKit/SwiftUIのwindow、encoding自動判定、CP932への再変換、autosave、Undoとの接続が未実装である。
-macOS UIは`CMucom::Editor*`およびpluginのtext更新commandを使用せず、このdocument modelから
-immutableなcompile requestを作成する。
+AppKit版`MUCOM88Editor.app`が`NSDocument`を介して`MmlDocument`を使用し、新規作成、MUC読込、
+UTF-8保存、別名保存、dirty state、標準の未保存確認、Undo/Redoを提供する。compile buttonはeditor上の
+immutable snapshotを`MucomCompileService`へ渡し、messageと先頭diagnostic行を表示する。
+encoding自動判定、CP932への再変換、autosave/recovery、行番号、検索は未実装である。macOS UIは
+`CMucom::Editor*`およびpluginのtext更新commandを使用しない。
 
 ### 再生と表示
 
-- [ ] compile、再生、停止、fadeのtransport UIを実装する
+- [-] compile、再生、停止、fadeのtransport UIを実装する（compile UIのみ実装）
 - [ ] 早送り、低速再生、音量を実装する
 - [ ] driver、PCM、voice、ROM、rhythm directoryを選択できるようにする
-- [ ] compile message、再生状態、経過時間を表示する
+- [-] compile message、再生状態、経過時間を表示する（compile messageのみ実装）
 - [ ] channel monitorを実装する
 - [ ] channel muteなどWindows版にある操作の必要性を確定して実装する
 - [ ] WAV、VGM、S98出力panelを実装する
@@ -663,3 +664,4 @@ macOSから直接利用可能な公開protocolと検証用hardwareを確保で�
 | 2026-09-21 | 方針変更 | Windows比較をApple Silicon上のWindows 11 ARM64 VMだけで進める方式へ変更。x86 emulation結果を機能比較基準とし、x64固有性能とARM64 driverのない実chipを完了条件から除外 | Windows componentがPE32/x86であること、Windows on Armのuser-mode emulation範囲、projectのSCCI2依存を確認 |
 | 2026-09-21 | Phase 2/3一部実装 | macOS初期MML editorからFM音色editor/pluginを分離。text-onlyの`MmlDocument`、snapshot compile用`MucomCompileService`、文書相対resource解決、voice read-only modeを追加 | `editor_core_test`で`sampl1.muc`の文書相対voice/PCM compile・再生開始・停止、MML保存前後の`voice.dat`不変、旧一時音色fileの無視、dirty状態、NUL拒否を確認 |
 | 2026-09-23 | Phase 1/2/4一部完了 | `MucomModule`のVM optionとcompiler optionを分離し、compile時の不要なSDL audio/timer初期化を廃止。`AudioSdl`の生成処理をjoin可能なthreadへ移し、停止後にaudio deviceを破棄する順序へ変更 | SDL dummy deviceで`sampl1.muc`の起動・Ctrl-C停止を60回連続実行し、crash/hang 0件。生成MUBは65,647 byte、SHA-256 `52116e8284f0e29d0de050b984926d6ca9da60e88cb1cb1b46d4ab586f31e309`で全回一致。`make mini test all`、`dep_test`、CTest 1件が成功。実deviceは試験環境でdefault deviceを取得できず未検証 |
+| 2026-09-23 | Phase 2/3一部完了 | AppKit/Objective-C++の`MUCOM88Editor.app` targetを追加。MUCの新規作成・open・UTF-8保存・別名保存、標準dirty確認、編集、compile結果と先頭error行の表示、MUC document type、development用ad-hoc署名を実装 | Apple Silicon上でbundleをbuildし、Info.plist、arm64 Mach-O、strict codesignを確認。Launch Servicesで起動して`sampl1.muc`を開き、文書相対`voice.dat`/`mucompcm.bin`によるcompile成功とmessage表示を確認。CTest 1件成功 |
