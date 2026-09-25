@@ -763,7 +763,7 @@ iconvはHomebrew版ではなくCommand Line Tools SDKの`libiconv.tbd`が検出�
 ### 残課題
 
 - x86_64およびUniversal Binaryでの検証
-- CTestはPhase 1の7件とPhase 2の10件、計17件を常設し、macOS版の決定性、round trip、format構造、
+- CTestはPhase 1の7件、Phase 2の10件、Phase 3の3件、計20件を常設し、macOS版の決定性、round trip、format構造、
   MUB異常系、CLI契約、SDL dummy、service境界、ASan/UBSan、TSanを確認済み。WAV/ADPCM readerの
   全異常系とfuzzingは今後の追加対象である。
   Windows ARM VM用harnessは任意調査用であり先行条件ではない
@@ -851,10 +851,11 @@ ctest --test-dir build-debug --output-on-failure
 ```
 
 生成物は`build/mucom88`、`build/libmucom88_runtime.a`、test有効時は`build/tests/`以下のtest executableで
-ある。CTestにはPhase 1の7件にPhase 2のservice試験10件を加えた17件が登録される。
+ある。CTestにはPhase 1の7件、Phase 2のservice試験10件、Phase 3のeditor試験3件を加えた20件が
+登録される。
 
-任意のprefixへinstallする場合は次のように指定する。現在のinstall targetはCLI executableのみで、
-`mucompcm.bin`、`voice.dat`、SDL2 dylibの配置はまだ自動化されていない。
+任意のprefixへinstallする場合は次のように指定する。macOSのinstall targetはCLI executableと
+`MUCOM88Editor.app`を含むが、`mucompcm.bin`、`voice.dat`、SDL2 dylibの配置はまだ自動化されていない。
 
 ```sh
 cmake -S src -B build -DCMAKE_BUILD_TYPE=Release \
@@ -876,6 +877,9 @@ ctest --test-dir build --output-on-failure
 |---|---|
 | `editor_core_test` | document保存、相対resource compile、再生開始・停止、NUL拒否 |
 | `document_service_test` | UTF-8／CP932、改行、atomic save、外部変更競合、recovery |
+| `editor_line_model_test` | Unicode、最終空行、論理行とUTF-8 byte range |
+| `editor_command_test` | editor commandの実行可否とPhase 4 commandの無効状態 |
+| `document_recovery_test` | recovery世代上限、scan、restore、cleanup、checksum |
 | `voice_service_test` | 256音色、8192 byte round trip、field検証、保存 |
 | `compile_service_test` | owned MUB、構造化diagnostic、非同期compile |
 | `operation_lifecycle_test` | operation ID、cancel、stale revision、破棄後callback |
@@ -896,13 +900,15 @@ ctest --test-dir build --output-on-failure
 生成artifactのSHA-256、構造値、build環境を検査・記録し、repository内のsample、PCM、voiceを変更しない。
 Windows生成物との一致は要求しない。
 
-sanitizer buildは通常buildとdirectoryを分離し、native editorを無効にして実行する。
+sanitizer buildは通常buildとdirectoryを分離して実行する。Phase 3以降はObjective-C++を含むapp targetの
+compile／linkも検査するため、native editorを有効にする。
 
 ```sh
 cmake -S src -B build-asan \
   -DCMAKE_BUILD_TYPE=Debug \
   -DBUILD_TESTING=ON \
-  -DMUCOM88_BUILD_MACOS_EDITOR=OFF \
+  -DMUCOM88_BUILD_MACOS_EDITOR=ON \
+  -DMUCOM88_ADHOC_SIGN_EDITOR=OFF \
   -DMUCOM88_ENABLE_ASAN_UBSAN=ON
 cmake --build build-asan --parallel
 ctest --test-dir build-asan --output-on-failure
@@ -910,14 +916,15 @@ ctest --test-dir build-asan --output-on-failure
 cmake -S src -B build-tsan \
   -DCMAKE_BUILD_TYPE=Debug \
   -DBUILD_TESTING=ON \
-  -DMUCOM88_BUILD_MACOS_EDITOR=OFF \
+  -DMUCOM88_BUILD_MACOS_EDITOR=ON \
+  -DMUCOM88_ADHOC_SIGN_EDITOR=OFF \
   -DMUCOM88_ENABLE_TSAN=ON
 cmake --build build-tsan --parallel
 ctest --test-dir build-tsan --output-on-failure
 ```
 
-二つのsanitizer optionは同時指定できない。2026-09-23にPhase 1の全7件、同日にPhase 2追加後の
-Release、Debug、ASan+UBSan、TSan各構成で全17件の成功を確認した。試験導入時に検出したVGM wait値の
+二つのsanitizer optionは同時指定できない。2026-09-24にPhase 3追加後のRelease、Debug、
+ASan+UBSan、TSan各構成で全20件の成功を確認した。試験導入時に検出したVGM wait値の
 不整合、fmgenのsigned overflow／未初期化値、SDL timer callbackとaudio終了処理のdata raceも修正済みである。
 
 ### 13.4 Makefileによるビルド
@@ -1188,14 +1195,25 @@ Command Line Tools環境でbuildできる。UIは`DocumentService`とapplication
 `ApplicationServices`／`MucomCompileService`だけを使用し、`CMucom`やVMの内部型を参照しない。
 Windows HSP GUI、FM音色editor、pluginとは分離している。
 
-初期実装で利用できる機能は次の通り。
+Phase 3完了時点で利用できる機能は次の通り。
 
-- 新規文書、MUCを開く、保存、別名保存、未保存文書を閉じる際の標準確認
-- monospaced fontの複数行MML編集、Undo/Redo、Cut/Copy/Paste
-- window titleへのfile名表示と`.muc` document typeの登録
+- 新規文書、MUC／N88／plain textを開く、safe save、別名保存、未保存文書を閉じる際の標準確認
+- UTF-8／BOM／CP932／Shift_JISの判定と明示選択、表現不能文字の拒否、混在改行の保持
+- monospaced fontの複数行MML編集、Undo/Redo、Cut/Copy/Paste、46pt幅の行番号gutter
+- AppKitの動的system colorによるLight／Dark Mode表示。Dark Modeでは本文、status、compile transcriptを実機確認済み
+- macOS標準find barによる検索／置換、Command-G／Shift-Command-G、Command-Lによる指定行移動
+- window titleへのfile名表示、MUC／N88／plain textの種別表示とUTI登録
+- Finder／Launch Services、複数fileのdrag and drop、標準Open Recent、複数document window
 - `Compile` buttonまたはCommand-Rによる編集中snapshotの非同期compileと旧operationのcancel
-- compile messageの表示、失敗時の先頭diagnostic行選択
+- compile transcriptと構造化diagnostic linkの表示、選択したerror行への移動
 - MUCと同じdirectoryを基準にした`#voice`および`#pcm`相対pathの解決
+- 編集停止5秒後のrecovery snapshot、documentごとの最大10世代、保存前backup、起動時のcrash recovery
+- Command-N/O/S/Shift-S/W/F/G/Shift-G/L/RとWindows互換Control-S
+
+保存時は`DocumentService::PrepareSave`で対象revisionとbyte列を固定し、`NSDocument`のsafe save成功後だけ
+`AcknowledgeSave`でpath、resource directory、encoding、fingerprint、保存済みcontent IDを更新する。
+保存中に追加編集された場合は現在内容をdirtyのまま保持する。旧`MmlDocument`は
+`DocumentService`のcompatibility wrapperとし、文書状態を二重管理しない。
 
 ### 17.2 `.app`のbuild
 
@@ -1259,12 +1277,16 @@ cancelし、完了時のdocument ID／revisionが現在値と異なる結果をU
 
 ### 17.4 現在の制約
 
-- 文書serviceはUTF-8/BOM、CP932、Shift_JISの判定と元encodingへのround tripを実装済みだが、UIから
-  encodingを明示変更する操作は未実装
+- CP932とShift_JISはbyte列だけで常に厳密判別できない。曖昧な入力はCP932を推定値として表示し、
+  Encoding menuから利用者が明示変更する
+- legacy compilerはerror columnを公開しないため、diagnosticのcolumnは未設定として扱う。UIは複数
+  diagnosticを表示できるが、現在のcompilerが返すprimary diagnosticは通常1件である
 - compileはserial workerで非同期実行する。GUIからの再生、停止、速度、monitor、WAV/VGM/S98 exportは
   service実装まで完了しているが、画面のtransport／save panelは未接続。操作は引き続きCLIを使用する
-- `.muc`以外のN88-BASIC source、MUB、drag and drop、recovery復元UI、検索、行番号gutterは未実装
-- sandbox、security-scoped bookmark、app icon、Developer ID署名、notarizationは未実装
+- MUBはeditor documentとして開かない。MUB再生／export UIはPhase 4以降の対象とする
+- sandboxは採用していないためsecurity-scoped bookmarkはN/Aである。sandboxを採用する場合は文書外の
+  PCM／voice／ROM／rhythm directoryにbookmark対応が必要となる
+- app icon、Developer ID署名、notarizationは未実装
 - bundleはHomebrewのSDL2-compat dylibを参照する開発用成果物であり、別Macへそのまま配布できる形ではない
 
 GUIで保存したMUCを再生する場合はrepository top directoryから次を実行する。
@@ -1275,11 +1297,14 @@ GUIで保存したMUCを再生する場合はrepository top directoryから次�
 
 ### 17.5 実機検証結果
 
-2026-09-23にApple Silicon/macOS 26.6.2上でDebug bundleをbuildし、Info.plist、arm64 Mach-O、
-ad-hoc署名、CTestを検証した。Launch Servicesからappを起動し、`package/sampl1.muc`の本文表示、
-文書相対`voice.dat`/`mucompcm.bin`を使ったcompile成功、message paneへの結果表示を確認した。
-Phase 2後はAppKit targetを含むbuildと全17件のCTestを成功させている。再生serviceはSDL dummyで検証し、
-再生操作そのものはこのGUI実機検証の対象外である。
+2026-09-24にApple Silicon/macOS 26.6.2上でPhase 3のRelease／Debug bundleをbuildし、Info.plist、
+ad-hoc署名、全20件のCTestを検証した。同じ20件をASan／UBSanおよびTSan構成でも成功させた。
+
+実GUIでは行番号ruler、標準find／replace UI、Go to Line、compile errorの3行目選択、diagnostic link、
+encoding menu、複数windowを確認した。未保存編集から5秒後にApplication Supportへrecoveryが生成され、
+process強制終了後の次回起動で内容をuntitled documentへ復元できることを確認した。`.n88`は
+Launch Services経由で開き、N88-BASIC文書として判定できた。再生serviceはSDL dummyで検証しているが、
+再生操作そのものはPhase 4のGUI実機検証対象である。
 
 ## 18. Windows ARM VMでの機能比較golden生成
 

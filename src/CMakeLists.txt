@@ -61,6 +61,9 @@ add_library(mucom88_runtime STATIC
     editor/serial_executor.cpp
     editor/application_services.cpp
     editor/document_service.cpp
+    editor/editor_command.cpp
+    editor/editor_line_model.cpp
+    editor/recovery_service.cpp
     editor/mucom_compile_service.cpp
     editor/audio_device_service.cpp
     editor/playback_session.cpp

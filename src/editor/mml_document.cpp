@@ -1,8 +1,5 @@
 #include "editor/mml_document.h"
 
-#include <filesystem>
-#include <fstream>
-#include <iterator>
 #include <utility>
 
 namespace mucom88 {
@@ -13,87 +10,47 @@ void SetError(std::string *error, const std::string &message)
     if (error != nullptr) *error = message;
 }
 
-bool ContainsNul(const std::string &text)
+bool Apply(const ServiceResult<DocumentSnapshot> &result,
+    DocumentSnapshot *snapshot, std::string *error)
 {
-    return text.find('\0') != std::string::npos;
+    if (!result.Succeeded()) {
+        SetError(error, result.error.message);
+        return false;
+    }
+    *snapshot = result.value;
+    return true;
 }
 
 } // namespace
 
+MmlDocument::MmlDocument()
+{
+    snapshot_ = service_.NewDocument().value;
+}
+
 bool MmlDocument::Load(const std::string &path, std::string *error)
 {
-    std::ifstream input(path, std::ios::binary);
-    if (!input) {
-        SetError(error, "Unable to open MML document: " + path);
-        return false;
-    }
-    std::string loaded((std::istreambuf_iterator<char>(input)),
-        std::istreambuf_iterator<char>());
-    if (!input.good() && !input.eof()) {
-        SetError(error, "Unable to read MML document: " + path);
-        return false;
-    }
-    if (ContainsNul(loaded)) {
-        SetError(error, "MML document contains an embedded NUL byte: " + path);
-        return false;
-    }
-    text_ = std::move(loaded);
-    saved_text_ = text_;
-    path_ = path;
-    return true;
+    return Apply(service_.Open(path), &snapshot_, error);
 }
 
 bool MmlDocument::Save(std::string *error)
 {
-    if (path_.empty()) {
-        SetError(error, "MML document has no save path.");
-        return false;
-    }
-    return SaveAs(path_, error);
+    return Apply(service_.Save(), &snapshot_, error);
 }
 
 bool MmlDocument::SaveAs(const std::string &path, std::string *error)
 {
-    if (path.empty()) {
-        SetError(error, "MML document has no save path.");
-        return false;
-    }
-    std::ofstream output(path, std::ios::binary | std::ios::trunc);
-    if (!output) {
-        SetError(error, "Unable to open MML document for writing: " + path);
-        return false;
-    }
-    output.write(text_.data(), static_cast<std::streamsize>(text_.size()));
-    output.close();
-    if (!output) {
-        SetError(error, "Unable to write MML document: " + path);
-        return false;
-    }
-    path_ = path;
-    saved_text_ = text_;
-    return true;
+    return Apply(service_.SaveAs(path, snapshot_.encoding), &snapshot_, error);
 }
 
 bool MmlDocument::ReplaceText(std::string text, std::string *error)
 {
-    if (ContainsNul(text)) {
-        SetError(error, "MML text contains an embedded NUL byte.");
-        return false;
-    }
-    text_ = std::move(text);
-    return true;
+    return Apply(service_.ReplaceText(std::move(text)), &snapshot_, error);
 }
 
 CompileRequest MmlDocument::MakeCompileRequest() const
 {
-    CompileRequest request;
-    request.utf8_text = text_;
-    request.source_path = path_;
-    if (!path_.empty()) {
-        request.resource_directory =
-            std::filesystem::path(path_).parent_path().string();
-    }
-    return request;
+    return service_.MakeCompileRequest();
 }
 
 } // namespace mucom88

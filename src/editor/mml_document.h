@@ -3,7 +3,7 @@
 
 #include <string>
 
-#include "editor/mucom_compile_service.h"
+#include "editor/document_service.h"
 
 namespace mucom88 {
 
@@ -11,20 +11,20 @@ namespace mucom88 {
 // to compilation and are never written as a side effect of document saving.
 class MmlDocument {
 public:
+    MmlDocument();
     bool Load(const std::string &path, std::string *error = nullptr);
     bool Save(std::string *error = nullptr);
     bool SaveAs(const std::string &path, std::string *error = nullptr);
     bool ReplaceText(std::string text, std::string *error = nullptr);
 
-    const std::string &Text() const { return text_; }
-    const std::string &Path() const { return path_; }
-    bool IsModified() const { return text_ != saved_text_; }
+    const std::string &Text() const { return snapshot_.utf8_text; }
+    const std::string &Path() const { return snapshot_.path; }
+    bool IsModified() const { return snapshot_.IsModified(); }
     CompileRequest MakeCompileRequest() const;
 
 private:
-    std::string text_;
-    std::string saved_text_;
-    std::string path_;
+    DocumentService service_;
+    DocumentSnapshot snapshot_;
 };
 
 } // namespace mucom88

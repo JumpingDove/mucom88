@@ -51,8 +51,8 @@ WAV、VGM、S98はWindows版との一致を保証しないが、それぞれのf
 
 | レベル | 対象 | 現状 |
 |---|---|---|
-| Level 1 | CLI compile、再生、MUB/WAV/VGM/S98出力 | 基本経路とmacOS native常設回帰試験17件を実装済み |
-| Level 2 | MML editor、compile、再生、browser、export | editorの編集・保存・非同期compileとPhase 2 core serviceを実装。再生等のUI接続は未完了 |
+| Level 1 | CLI compile、再生、MUB/WAV/VGM/S98出力 | 基本経路とmacOS native常設回帰試験20件を実装済み |
+| Level 2 | MML editor、compile、再生、browser、export | Phase 3 editorを完成。Phase 2再生／export serviceのUI接続とbrowserは未完了 |
 | Level 3 | player、monitor、PCM tool、FM音色editor、CoreMIDI | 未着手または旧Makefile targetのみ |
 | Level 4 | 署名済み配布、更新、共有、外部provider | 未着手。実chipは拡張profile |
 
@@ -518,20 +518,19 @@ monitor、export、voice、AppKitの順に接続する。
 ## Phase 3: MML editor完成
 
 - [x] 新規作成、開く、UTF-8保存、別名保存、標準dirty確認
-- [-] compile結果と先頭error行の表示
-- [-] UTF-8、CP932、Shift_JISの判定と元encodingへのround trip
-- [ ] 行番号gutter、検索、置換、指定行移動
-- [ ] MUC、N88-BASIC source、任意textのtype判定
-- [ ] drag and drop、最近使ったfile、複数document
-- [ ] autosave、世代backup、crash recovery
-- [ ] macOS標準shortcutとWindows互換shortcutの割当
-- [ ] Finder関連付けとUTI
-- [ ] sandbox採用時のsecurity-scoped bookmark
+- [x] compile結果、構造化diagnostic一覧、error行への移動
+- [x] UTF-8、UTF-8 BOM、CP932、Shift_JISの判定、明示選択、元encodingへのround trip
+- [x] 行番号gutter、検索、置換、指定行移動
+- [x] MUC、N88-BASIC source、任意textのtype判定
+- [x] drag and drop、最近使ったfile、複数document
+- [x] recovery autosave、10世代backup、crash recovery
+- [x] macOS標準shortcutとPhase 3範囲のWindows互換shortcut
+- [x] Finder関連付けとUTI
+- [x] sandbox非採用を確定し、security-scoped bookmarkをN/Aとする
 
-encodingは一般的なUTF-8／CP932文書のround tripまで実装済みである。ただしCP932はShift_JISの
-大部分を包含するため、現在の「CP932変換を先に試す」実装では両者を厳密に自動判別できない。
-また、最初に見つけた改行形式へ文書全体を正規化するため、混在改行の保持は未完了である。
-このため、明示的なencoding選択と混在改行の扱いが完成するまで一部完了とする。
+CP932はShift_JISの大部分を包含するため両者を常に自動判別することはできない。曖昧な入力はCP932を
+推定値として表示し、Encoding menuからShift_JISを含む保存encodingを明示選択する仕様で完了とする。
+混在改行は行単位の改行情報を保持し、編集で増えた行には文書の優先改行を使用する。
 
 ### Phase 3の実装原則
 
@@ -651,9 +650,10 @@ keyboardの全経路を同じcommandへ接続する。`validateUserInterfaceItem
 - 将来sandboxを採用する場合はdocument外のPCM、voice、ROM、rhythm directoryだけをbookmark化し、
   stale bookmark更新とaccess開始／終了を対にする
 
-### Phase 3のfile分割方針
+### Phase 3の責務分割
 
-単一の`mucom_editor.mm`へ機能を追加し続けず、次の単位へ分離する。
+coreは次の単位へ物理分割した。AppKit側は同じObjective-C++ translation unit内でclass単位に責務を
+分けている。AppKit fileの物理分割は保守上の改善候補だが、Phase 3の機能完了条件にはしない。
 
 | 層 | 実装単位 | 責務 |
 |---|---|---|
@@ -662,9 +662,9 @@ keyboardの全経路を同じcommandへ接続する。`validateUserInterfaceItem
 | core | `RecoveryService` | recovery／backupの保存、世代管理、scan、cleanup |
 | core | `EditorCommand` | command ID、実行可否、dispatch contract |
 | AppKit | `MucomDocument` | `NSDocument` lifecycleとcore modelの同期 |
-| AppKit | `MucomEditorWindowController` | editor、status、message layout |
+| AppKit | `MucomDocument`のwindow構築 | editor、status、message layout |
 | AppKit | `LineNumberRulerView` | visible行番号とcursor行表示 |
-| AppKit | `DiagnosticController` | diagnostic一覧とsource位置移動 |
+| AppKit | `MucomDocument`のdiagnostic表示 | diagnostic一覧とsource位置移動 |
 
 ### Phase 3の実装順序と完了gate
 
@@ -707,6 +707,14 @@ Launch Servicesは自動試験だけで完了扱いにせず、`tests/manual/mac
 - MUC／N88をFinderから開け、任意textの既定appを不必要に変更しない
 - sandbox非採用ならbookmark項目を理由付きN/Aとし、採用する場合だけsecurity-scoped bookmarkを試験する
 - CLI、Phase 1、Phase 2の全常設試験が引き続き成功する
+
+**Phase 3完了日: 2026-09-24**
+
+実装後はRelease、Debug、ASan／UBSan、TSanの各構成で全20 CTestに成功した。実GUIでは行番号ruler、
+標準find barと置換UI、Go to Line、compile errorの3行目選択、diagnostic link、encoding menu、複数window、
+5秒後のrecovery生成、process強制終了後の復元、N88 fileのLaunch Services openを確認した。
+legacy compilerが返すcolumnは未提供のためoptionalの未設定値とし、現在のcompilerが返すprimary
+diagnosticは通常1件だが、UIとservice contractは複数件を保持・選択できる。
 
 ## Phase 4: 再生GUIとAudio
 
@@ -831,7 +839,7 @@ Universal BinaryとIntel Macは標準版の完了条件にしない。
 7. Phase 9～10: 署名済み配布物と最終受入
 8. 拡張profile: 実chip、外部driver。標準版後または外部仕様・hardware確保後
 
-次に実装すべき対象は、Phase 3のeditor残機能とPhase 4の再生serviceのGUI接続である。Windows golden生成、
+次に実装すべき対象は、Phase 4の再生serviceのGUI接続と実audio device受入である。Windows golden生成、
 VM導入、Windows CLI比較は先行条件にしない。
 
 ## 実施履歴
@@ -851,3 +859,5 @@ VM導入、Windows CLI比較は先行条件にしない。
 | 2026-09-23 | Phase 2完了 | document、owned MUB compile、単一worker再生、audio、monitor、4形式export、voice、application共有serviceを実装し、AppKit compileを非同期service経由化 | Phase 2試験10件を追加し、既存7件を含む全17件がDebug／Release／ASan+UBSan／TSanで成功 |
 | 2026-09-23 | Makefile依存修正 | `miniplay`で旧・新class layoutのobjectが混在してmutex例外になる問題を防止 | `.d`自動生成、Makefile変更時の全object再build、SDL dummy／実deviceで`sampl1.muc`再生開始とCtrl-C終了を確認 |
 | 2026-09-23 | Phase 3計画具体化 | document保存状態の一元化を先行し、encoding、diagnostic、editor操作、複数document、recovery、shortcut、UTIの実装方法と順序を確定 | AppKit editor、DocumentService、compile diagnostic、recovery形式、Info.plist、Windows shortcut、GUI受入仕様を照合 |
+| 2026-09-24 | Phase 3完了 | save acknowledgement、encoding／混在改行／type、行番号、find／replace、diagnostic link、複数document、drop、recovery／backup、shortcut、MUC／N88 UTIを実装 | Release／Debug／ASan+UBSan／TSanで全20 CTest成功。実GUIで検索、行移動、compile error、複数window、crash recovery、N88 openを確認 |
+| 2026-09-25 | Phase 3 Dark Mode表示修正 | `LineNumberRulerView`の幅を46ptへ固定し、ruler背景がeditor全体を覆ってMUC本文を隠す問題を修正。editor／messageへ動的system colorを適用 | Dark Mode実GUIで`sampl1.muc`本文、行番号、status、compile transcript、縦scroll追従を確認 |

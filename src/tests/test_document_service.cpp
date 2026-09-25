@@ -25,6 +25,9 @@ int main()
         originalRevision);
     CHECK(test, document.ReplaceText("A d\n; edited\n").Succeeded());
     CHECK(test, document.Snapshot().IsModified());
+    CHECK(test, document.ReplaceText(opened.value.utf8_text).Succeeded());
+    CHECK(test, !document.Snapshot().IsModified());
+    CHECK(test, document.ReplaceText("A d\n; edited\n").Succeeded());
 
     const fs::path utf8Path = temporary / "saved.muc";
     auto saved = document.SaveAs(utf8Path.string(), mucom88::TextEncoding::Utf8);
@@ -53,8 +56,42 @@ int main()
     const fs::path legacyPath = temporary / "legacy-saved.muc";
     CHECK(test, document.SaveAs(
         legacyPath.string(), mucom88::TextEncoding::Cp932).Succeeded());
+    const auto forcedShiftJis = document.OpenData(cp932,
+        (temporary / "legacy-shift-jis.muc").string(),
+        mucom88::TextEncoding::ShiftJis);
+    CHECK(test, forcedShiftJis.Succeeded());
+    CHECK(test, forcedShiftJis.value.encoding == mucom88::TextEncoding::ShiftJis);
+    CHECK(test, !forcedShiftJis.value.encoding_was_guessed);
 
-    CHECK(test, document.ReplaceText(legacy.value.utf8_text + "; recovery\n").Succeeded());
+    const std::string bom = std::string("\xef\xbb\xbf", 3) + "A c\n";
+    const auto utf8Bom = document.OpenData(
+        bom, (temporary / "bom.muc").string());
+    CHECK(test, utf8Bom.Succeeded());
+    CHECK(test, utf8Bom.value.encoding == mucom88::TextEncoding::Utf8Bom);
+    CHECK(test, document.EncodedData().value == bom);
+
+    const std::string mixedBytes = "10 A c\r\n20 B d\n30 END\r";
+    const auto mixed = document.OpenData(
+        mixedBytes, (temporary / "numbered.n88").string());
+    CHECK(test, mixed.Succeeded());
+    CHECK(test, mixed.value.kind == mucom88::DocumentKind::N88Basic);
+    CHECK(test, mixed.value.newline == mucom88::NewlineStyle::Mixed);
+    CHECK(test, document.EncodedData().value == mixedBytes);
+
+    const auto savePlan = document.PrepareSave(
+        (temporary / "planned.n88").string(), mucom88::TextEncoding::Utf8);
+    CHECK(test, savePlan.Succeeded());
+    CHECK(test, document.ReplaceText(mixed.value.utf8_text + "40 C e\n").Succeeded());
+    const auto acknowledged = document.AcknowledgeSave(savePlan.value);
+    CHECK(test, acknowledged.Succeeded());
+    CHECK(test, acknowledged.value.IsModified());
+    CHECK(test, acknowledged.value.path == (temporary / "planned.n88").string());
+
+    const auto plain = document.OpenData("notes\n", (temporary / "notes.txt").string());
+    CHECK(test, plain.Succeeded());
+    CHECK(test, plain.value.kind == mucom88::DocumentKind::PlainText);
+
+    CHECK(test, document.ReplaceText(plain.value.utf8_text + "; recovery\n").Succeeded());
     const auto recovery = document.WriteRecovery((temporary / "Recovery").string());
     CHECK(test, recovery.Succeeded());
     mucom88::DocumentService restored;

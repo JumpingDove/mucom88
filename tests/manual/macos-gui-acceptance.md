@@ -30,6 +30,21 @@ tester=
 - audio項目にはdevice、継続時間、underrun、dropped sampleを記録する
 - network、更新、共有はtest doubleを基本とし、意図しない外部送信を行わない
 
+### Phase 3開発時確認（2026-09-24～2026-09-25）
+
+これはrelease候補の最終受入記録ではなく、Phase 3実装時の開発確認である。
+
+| 対象 | 結果 | 証跡 |
+|---|---|---|
+| `GUI-EDIT-01`～`05`、`07`、`09` | PASS | Release／Debug／ASan+UBSan／TSanで全20 CTest成功。実GUIでruler、find／replace、Go to Line、diagnostic link、encoding menu、複数windowを確認 |
+| `GUI-EDIT-06` | PARTIAL | MMLのdirty、Undo、close確認は実装済み。voice変更の統合はnative FM音色editorを実装するPhase 7で確認する |
+| `GUI-EDIT-08` | PARTIAL | Phase 3のsave、compile、検索、行移動commandは実装済み。再生、stop、早送りshortcutはPhase 4で有効化する |
+| document recovery | PASS | 未保存編集の5秒後にrecovery生成、process強制終了、次回起動の復元dialog、untitled documentへの内容復元を確認 |
+| MUC／N88 UTI | PASS | `plutil`、ad-hoc署名を検証し、Launch Services経由で`.n88`を開いてN88-BASIC type判定を確認 |
+| Dark Mode editor表示 | PASS | `sampl1.muc`で本文、46pt幅の行番号、status、compile transcriptを同時表示し、縦scroll時の行番号追従を確認 |
+| sandbox bookmark | N/A | 現在のappはsandboxを採用していない。採用時だけ文書外resource directoryをbookmark化する |
+| Phase 4 shortcut | BLOCKED | F5／F12、Esc、Control-F1は再生・停止・早送りUIと同時にPhase 4で有効化する |
+
 ## Editor・document
 
 | ID | Scope | 予定自動試験 | 手動操作と期待結果 |

@@ -24,6 +24,18 @@ mucom88_add_test_executable(document_service_test test_document_service.cpp)
 add_test(NAME document_service_test COMMAND document_service_test)
 mucom88_set_test_properties(document_service_test 30)
 
+mucom88_add_test_executable(editor_line_model_test test_editor_line_model.cpp)
+add_test(NAME editor_line_model_test COMMAND editor_line_model_test)
+mucom88_set_test_properties(editor_line_model_test 15)
+
+mucom88_add_test_executable(editor_command_test test_editor_command.cpp)
+add_test(NAME editor_command_test COMMAND editor_command_test)
+mucom88_set_test_properties(editor_command_test 15)
+
+mucom88_add_test_executable(document_recovery_test test_document_recovery.cpp)
+add_test(NAME document_recovery_test COMMAND document_recovery_test)
+mucom88_set_test_properties(document_recovery_test 30)
+
 mucom88_add_test_executable(voice_service_test test_voice_service.cpp)
 add_test(NAME voice_service_test COMMAND voice_service_test)
 mucom88_set_test_properties(voice_service_test 30)

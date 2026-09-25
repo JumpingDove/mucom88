@@ -5,6 +5,7 @@
 #include <array>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -21,9 +22,17 @@ enum class DriverMode : int {
     MucomDotNet = 8
 };
 
+enum class DiagnosticSeverity {
+    Info,
+    Warning,
+    Error
+};
+
 struct CompileDiagnostic {
+    DiagnosticSeverity severity = DiagnosticSeverity::Error;
     int code = 0;
     int line = 0;
+    std::optional<int> column;
     std::string message;
 };
 
