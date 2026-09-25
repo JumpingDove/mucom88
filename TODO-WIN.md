@@ -731,6 +731,172 @@ diagnosticは通常1件だが、UIとservice contractは複数件を保持・選
 - [ ] tempo、音切れ、click、終了時noiseを聴感確認する
 - [ ] underrun、dropped sample、再充填回数を診断表示する
 
+### Phase 4の実装境界
+
+Phase 4はPhase 2で実装済みの`MucomCompileService`、`PlaybackSession`、`AudioDeviceService`、
+`MonitorSnapshot`をAppKitへ接続し、実CoreAudio deviceで受け入れる段階とする。folder browser、playlist、
+Now Playing、11 channelの詳細monitorはPhase 5へ残し、Phase 4のeditorにはtransport、簡易progress、driver、
+状態、audio診断だけを表示する。
+
+`TODO.md`の「Phase 4: SDL dummy audio試験」は既に完了した自動試験基盤を指し、本節のGUI／実device
+Phase 4とは別の段階である。
+
+### application単位の`PlaybackCoordinator`
+
+`PlaybackSession`のobserverは1つだけであるため、各`MucomDocument`から直接`SetObserver`を呼ばない。
+`ApplicationServices`がplatform-neutralな`PlaybackCoordinator`を1つ所有し、Coordinatorだけが
+`PlaybackSession`を購読する。document windowはtoken付きでCoordinatorを購読し、close時に解除する。
+
+Coordinatorは次を所有・調停する。
+
+- activeな`DocumentId`、`Revision`、`SessionId`、`CompiledSong`と再生option
+- application全体で単調増加するcompile-and-play要求世代
+- pause、resume、stop、速度変更、device再接続のcommand dispatch
+- output device選択とresource設定のimmutable snapshot
+- 複数windowへの状態通知と、Phase 5が利用する次曲要求hook
+
+F5／F12のcompile-and-playは、現在の再生停止、前回要求のcancel、新しい要求世代の発行、編集内容の
+snapshot compile、結果検証、`PlaybackSession::Play`の順で実行する。callbackではoperation ID、要求世代、
+document ID、revisionのすべてが一致した場合だけ再生する。Stopは再生だけでなく未完了のplay intentも
+無効化し、別documentの遅延compile結果が再生を奪わないようにする。compile開始後に本文が変更された場合は
+自動再生せず、再度Playが必要であることを表示する。
+
+application内のactive playbackは常に1つとする。別documentからPlayした場合は旧sessionを停止して
+`SessionId`を更新する。active documentを閉じた場合は、画面のない再生を残さないため停止する。
+
+### transport、状態表示、shortcut
+
+editor上部をtransport行とstatus／progress行に分け、次を配置する。
+
+- Compile、Compile & Play、Pause／Resume、Stop
+- x2、x4、x6、x8、x10の速度popup
+- output device popupとReconnect
+- current／max count、loop回数、driver、playback state、現在速度
+- underrun、dropped frame、refill event、queued frame
+
+UIはaudio callbackやplayback workerから描画を待たせない。main threadのtimerで15 Hz程度に
+`LatestSnapshot`を取得し、有限曲はdeterminate progress、loop曲はloop内位置とloop回数、max count不明時は
+indeterminate progressとして表示する。A～Kのchannel詳細表示はPhase 5で追加する。
+
+shortcutはWindows GUIの実処理に合わせ、F5／F12をCompile & Play、EscをPlaying／Buffering時のPauseと
+Paused時のResumeにする。完全停止はStop buttonとPlayback menuから実行する。Control-F1は押下中だけ選択済み
+倍率へ変更し、key-up、window非active化、再生終了のいずれでもx1へ戻す。function keyをmacOSが使用する環境を
+考慮し、同じ操作をmenuとbuttonから常に実行可能にする。Control-F1のkey-upが必要なためglobal event tapは
+使用せず、application内のlocal event monitorを使用する。
+
+`EditorCommandState`は単一の`playback_ui_ready`だけでなく、現在の`PlaybackState`からPlay、Pause、Resume、
+Stop、速度変更、Reconnectの可否を導出する。`Stopping`中の重複操作は禁止し、`DeviceLost`ではStop、device選択、
+Reconnectだけを有効にする。
+
+### PCM、voice、外部ROM、rhythm directory
+
+compile要求ごとに次のresource設定を値としてcopyし、非同期処理中にUI設定が変わっても意味が変化しないようにする。
+
+```text
+ResourceConfiguration
+  document_directory
+  default_pcm_file
+  default_voice_file
+  external_rom_directory
+  rhythm_directory
+  use_external_rom
+```
+
+PCMとvoiceはMML内の`#pcm`／`#voice`を最優先し、タグがない場合だけ選択済みdefaultを使用する。タグ内の
+相対pathはdocument directory基準とする。未保存documentで相対resourceを指定した場合はprocess current
+directoryへ暗黙解決せず、保存またはresource root選択を要求する。
+
+default voiceはcompile前に読み込む。default PCMは`CompiledSong`へ解決済みpathを保持し、MUBにPCMが
+埋め込まれていない場合にplayback runtimeへpreloadする。MUB埋込PCMがある場合は埋込dataを優先する。
+
+rhythm directoryは`CMucom::Init`から`mucomvm::InitSoundSystem`、`FM::OPNA`へ明示的に渡す。現在のCLIの
+一時的な`chdir`や、文字列へのseparator連結には依存せず、directoryと`2608_BD.WAV`、`2608_SD.WAV`、
+`2608_TOP.WAV`、`2608_HH.WAV`、`2608_TOM.WAV`、`2608_RIM.WAV`をpathとして結合する。一部欠落時は
+不足fileを列挙したerrorにする。CLIの`-r`も同じAPIを使用する。
+
+外部ROMはCLIの`-e`に相当する外部MUCOM driver file群のdirectoryとして扱う。driverごとに必要な
+`expand`、`errmsg`、`msub`、`muc88`、`ssgdat`、`time`、`smon`、`music`を事前検査し、相対
+`LoadMem`の失敗を無視しない。repositoryに再配布可能なfixtureがないため、path検証とerror伝播は自動試験し、
+実dataでの動作は利用者が用意したresourceによる手動受入とする。
+
+Phase 4ではresource選択をapplication実行中の設定として保持する。永続化、schema migration、破損設定からの
+default復帰はPhase 8の`SettingsService`で追加し、Phase 4へ設定file形式を先行導入しない。
+
+### output device、format、切断、再接続
+
+SDL2の列挙indexを永続IDとして使用しない。選択値は`System Default`またはdevice名として保持し、再生開始と
+device list更新時に再列挙して現在のdescriptorへ解決する。同名deviceが実機で問題になる場合だけCoreAudio UIDを
+使用するbackendを追加する。「default変更」はmacOS全体のsystem defaultを書き換える操作ではなく、appの選択を
+`System Default`へ戻す操作とする。
+
+SDL audio device eventを処理するため、AppKit main threadの短周期timerからaudio device eventだけをpumpする。
+`SDL_AUDIODEVICEREMOVED`のinstance IDがopen中deviceと一致した場合は`MarkDeviceLost`を呼び、sessionを
+`DeviceLost`へ遷移させる。別deviceへ無断で切り替えない。Reconnectでは再列挙後、保持している同じ
+`CompiledSong`を曲頭から再生する。runtimeに安全なseek契約がないため、切断位置からの再開は保証しない。
+
+初期実装では44.1 kHz、signed 16-bit、stereoのexact openを維持し、暗黙のcustom resamplingは追加しない。
+format不一致時はdevice名、requested format、obtainedまたはpreferred formatを含む`UnsupportedFormat`を表示する。
+実機でexact openできない対象deviceが確認された場合に限り、`SDL_AudioStream`による変換を追加する。
+
+### audio診断とclick対策
+
+診断値を次の意味に固定する。
+
+- `underruns`: callbackが要求sampleを取得できなかった回数
+- `dropped_frames`: rendererが生成したがringへ渡せず実際に破棄したframe数
+- `refill_events`: underflowまたは空bufferの後に音声供給を再開した回数
+- `rendered_frames`: runtimeが生成したframe数
+- `queued_frames`: 現在ringに残っているframe数
+
+現在の部分書込みは未書込み部分を再試行しても`dropped_frames`へ加算し、書込み0で破棄された部分を数えない場合が
+あるため、ringへの受入数とPlaybackSessionが最終的に破棄した数を分離して計数する。初回prefillは
+`refill_events`へ含めず、再生開始後の回復だけを数える。
+
+pause、resume、stop、自然終了の波形切断を避けるため、開始／resume時に約256 frameのfade-in、pause／stop時に
+audio callback側で約256 frameのfade-outを行う。自然終了は最終render blockへfade-outを適用してから
+`Draining`へ遷移する。device lost時はfade完了を待たず停止する。fade待機はplayback worker内だけで行い、
+AppKit main threadをblockしない。
+
+### 曲末とPhase 5への次曲遷移
+
+有限曲は既存規則どおりmax count到達後にring bufferを排出し、`Finished`を通知してaudio deviceを閉じる。
+Phase 4ではCoordinatorに「次の`CompiledSong`を返す」任意hookを用意し、2曲を渡した場合のsession切替を
+headless testで固定する。Phase 4のeditorはqueueを登録しないため、通常はFinished表示で停止する。
+
+folderからの曲選択、playlist生成、compile失敗skip、末尾から先頭へ戻るloop、最大時間／曲長割合によるskipは
+Phase 5で実装する。この境界により、Phase 4の「次曲への遷移」はservice契約と安全なsession切替までとし、
+user-facingなautomatic playerを先取りしない。
+
+### Phase 4の実装順序と完了gate
+
+| 段階 | 実施内容 | 完了gate |
+|---|---|---|
+| 4-0 | resource値型、Coordinator、command状態、診断値の定義 | stale play intent、複数document、drop／refill単体試験 |
+| 4-1 | default PCM／voice、rhythm、外部ROMの明示path | 起動directory非依存、欠落resourceの明確なerror |
+| 4-2 | compile-and-play、transport、progress、shortcut | F5／F12、Esc、Control-F1とbutton／menuの結果が一致 |
+| 4-3 | device picker、hotplug、DeviceLost、Reconnect、format表示 | 切断時に無断切替せず、選択後に曲頭から再接続 |
+| 4-4 | 診断表示、fade-in／out、曲末hook | 反復操作でhangせず、sample不連続試験が成功 |
+| 4-5 | dummy／sanitizer回帰 | 全既存CTestとPhase 4追加試験がDebug／Release／sanitizerで成功 |
+| 4-6 | 実CoreAudio受入 | 内蔵speakerでPCM曲を60分以上再生し、既知の音切れ、click、tempo変動なし |
+
+### Phase 4で追加する常設試験
+
+- 最新の編集snapshotだけが再生され、Stop後に遅延compile結果が再生されない
+- document Aの遅延結果がdocument Bのactive sessionを上書きしない
+- Pause／Resume、Stop／Play、device close／openをそれぞれ100回反復する
+- x2、x4、x6、x8、x10でprogress進行率が倍率と一致し、解除後にx1へ戻る
+- 1.7、1.5、EMの有限曲、loop曲、PCM曲で曲末規則が変わらない
+- `#pcm`／`#voice`とdefault resourceの優先順位、空白／日本語を含むpath
+- 合成した6種類のrhythm WAVを明示directoryから読み、rhythm channelが非無音になる
+- stale device descriptor拒否、device lost mock、再列挙、明示再接続
+- requested／obtained formatを含むerror
+- underrun、実際に破棄したframe、refill eventの計数
+- fade前後のsample不連続、終了時のbuffer排出
+- window close／app終了中のcallback破棄とworker停止
+
+実CoreAudio試験は通常のCTestへ含めず、`tests/manual/macos-gui-acceptance.md`へmacOS version、machine、
+device、継続時間、操作回数、underrun、dropped frame、refill event、聴感結果を記録する。
+
 完了条件: 実CoreAudio deviceで長時間再生し、操作、曲切替、終了にhangがなく、既知のclick、tempo変動、
 PCM欠落がない。
 
@@ -861,3 +1027,4 @@ VM導入、Windows CLI比較は先行条件にしない。
 | 2026-09-23 | Phase 3計画具体化 | document保存状態の一元化を先行し、encoding、diagnostic、editor操作、複数document、recovery、shortcut、UTIの実装方法と順序を確定 | AppKit editor、DocumentService、compile diagnostic、recovery形式、Info.plist、Windows shortcut、GUI受入仕様を照合 |
 | 2026-09-24 | Phase 3完了 | save acknowledgement、encoding／混在改行／type、行番号、find／replace、diagnostic link、複数document、drop、recovery／backup、shortcut、MUC／N88 UTIを実装 | Release／Debug／ASan+UBSan／TSanで全20 CTest成功。実GUIで検索、行移動、compile error、複数window、crash recovery、N88 openを確認 |
 | 2026-09-25 | Phase 3 Dark Mode／行番号表示修正 | `LineNumberRulerView`の幅を46ptへ固定し、ruler背景がeditor全体を覆ってMUC本文を隠す問題を修正。editor／messageへ動的system colorを適用。行番号の位置と表示領域をAppKitでtext viewからrulerへ変換し、本文と同じ境界でclipしてglyph baselineへ整列 | Dark Mode実GUIで`sampl1.muc`本文、行番号、status、compile transcriptを表示。scrollbarの上端／中間／下端／端数位置と上端復帰時に追従し、上下端の部分行で本文と行番号のclipとbaselineが一致することを確認 |
+| 2026-09-25 | Phase 4計画具体化 | application単位Coordinator、stale compile抑止、transport／shortcut、resource解決、device hotplug／再接続、audio診断、click対策、Phase 5との次曲境界を確定 | 現行のPlaybackSession、AudioDeviceService、AppKit、CLI resource経路、Windows HSP操作、GUI受入仕様を照合。実装・試験は未着手 |
