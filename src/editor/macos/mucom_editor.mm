@@ -202,22 +202,32 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     NSTextContainer *container = textView.textContainer;
     if (layout == nil || container == nil) return;
 
+    NSFont *normalFont = [NSFont monospacedDigitSystemFontOfSize:10.0
+        weight:NSFontWeightRegular];
+    NSFont *selectedFont = [NSFont monospacedDigitSystemFontOfSize:10.0
+        weight:NSFontWeightSemibold];
     NSDictionary *normal = @{
-        NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:10.0
-            weight:NSFontWeightRegular],
+        NSFontAttributeName: normalFont,
         NSForegroundColorAttributeName: NSColor.secondaryLabelColor
     };
     NSDictionary *selected = @{
-        NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:10.0
-            weight:NSFontWeightSemibold],
+        NSFontAttributeName: selectedFont,
         NSForegroundColorAttributeName: NSColor.labelColor
     };
+    NSRect textVisibleRect = textView.visibleRect;
+    NSRect rulerViewport = [self convertRect:textVisibleRect fromView:textView];
+    rulerViewport.origin.x = NSMinX(self.bounds);
+    rulerViewport.size.width = self.ruleThickness;
+    rulerViewport = NSIntersectionRect(rulerViewport, self.bounds);
+    if (NSIsEmptyRect(rulerViewport)) return;
+
     const NSUInteger selectedLocation = textView.selectedRange.location;
     NSRange visibleCharacters = NSMakeRange(0, text.length);
     if (layout.numberOfGlyphs > 0) {
-        NSRect visibleRect = self.scrollView.contentView.bounds;
-        visibleRect.origin.y -= textView.textContainerInset.height;
-        NSRange visibleGlyphs = [layout glyphRangeForBoundingRect:visibleRect
+        const NSPoint containerOrigin = textView.textContainerOrigin;
+        textVisibleRect.origin.x -= containerOrigin.x;
+        textVisibleRect.origin.y -= containerOrigin.y;
+        NSRange visibleGlyphs = [layout glyphRangeForBoundingRect:textVisibleRect
             inTextContainer:container];
         visibleCharacters = [layout characterRangeForGlyphRange:visibleGlyphs
             actualGlyphRange:nullptr];
@@ -227,6 +237,8 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     std::size_t lineIndex = first == _lineStarts.begin() ? 0 :
         static_cast<std::size_t>(first - _lineStarts.begin() - 1);
     const NSUInteger visibleEnd = NSMaxRange(visibleCharacters);
+    [NSGraphicsContext saveGraphicsState];
+    NSRectClip(rulerViewport);
     for (; lineIndex < _lineStarts.size(); ++lineIndex) {
         const NSUInteger lineStart = _lineStarts[lineIndex];
         if (lineStart > visibleEnd && lineIndex > 0) break;
@@ -235,26 +247,47 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
         NSUInteger contentsEnd = 0;
         [text getLineStart:&start end:&end contentsEnd:&contentsEnd
                   forRange:NSMakeRange(lineStart, 0)];
-        CGFloat y = 0.0;
+        NSRect fragment = NSZeroRect;
+        CGFloat baselineInContainer = 0.0;
         if (lineStart < text.length && layout.numberOfGlyphs > 0) {
             const NSUInteger glyph = [layout glyphIndexForCharacterAtIndex:lineStart];
-            NSRect fragment = [layout lineFragmentRectForGlyphAtIndex:glyph
-                                                       effectiveRange:nullptr];
-            y = NSMinY(fragment) + textView.textContainerInset.height;
+            fragment = [layout lineFragmentRectForGlyphAtIndex:glyph
+                                                effectiveRange:nullptr];
+            baselineInContainer = NSMinY(fragment) +
+                [layout locationForGlyphAtIndex:glyph].y;
         } else {
-            NSRect fragment = layout.extraLineFragmentRect;
-            y = NSMinY(fragment) + textView.textContainerInset.height;
+            fragment = layout.extraLineFragmentRect;
+            NSFont *editorFont = textView.font ?: [NSFont systemFontOfSize:13.0];
+            baselineInContainer = NSMinY(fragment) +
+                [layout defaultBaselineOffsetForFont:editorFont];
         }
-        if (y + 14.0 >= NSMinY(self.bounds) && y <= NSMaxY(self.bounds)) {
+        const NSPoint containerOrigin = textView.textContainerOrigin;
+        NSRect fragmentInTextView = NSOffsetRect(fragment,
+            containerOrigin.x, containerOrigin.y);
+        NSRect fragmentInRuler = [self convertRect:fragmentInTextView
+                                          fromView:textView];
+        fragmentInRuler.origin.x = NSMinX(self.bounds);
+        fragmentInRuler.size.width = self.ruleThickness;
+        if (NSIntersectsRect(fragmentInRuler, rulerViewport)) {
             const BOOL current = selectedLocation >= start &&
                 selectedLocation <= std::max(start, contentsEnd);
             NSString *label = [NSString stringWithFormat:@"%lu",
                 static_cast<unsigned long>(lineIndex + 1)];
-            const NSSize size = [label sizeWithAttributes:current ? selected : normal];
-            [label drawAtPoint:NSMakePoint(self.ruleThickness - size.width - 6.0, y)
-                withAttributes:current ? selected : normal];
+            NSDictionary *attributes = current ? selected : normal;
+            NSFont *labelFont = current ? selectedFont : normalFont;
+            const NSSize size = [label sizeWithAttributes:attributes];
+            const NSPoint baselineInTextView = NSMakePoint(0.0,
+                baselineInContainer + containerOrigin.y);
+            const CGFloat baselineInRuler = [self
+                convertPoint:baselineInTextView fromView:textView].y;
+            const CGFloat labelY = baselineInRuler -
+                [layout defaultBaselineOffsetForFont:labelFont];
+            [label drawAtPoint:NSMakePoint(
+                self.ruleThickness - size.width - 6.0, labelY)
+                withAttributes:attributes];
         }
     }
+    [NSGraphicsContext restoreGraphicsState];
 }
 
 @end

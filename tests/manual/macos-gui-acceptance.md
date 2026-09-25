@@ -41,7 +41,7 @@ tester=
 | `GUI-EDIT-08` | PARTIAL | Phase 3のsave、compile、検索、行移動commandは実装済み。再生、stop、早送りshortcutはPhase 4で有効化する |
 | document recovery | PASS | 未保存編集の5秒後にrecovery生成、process強制終了、次回起動の復元dialog、untitled documentへの内容復元を確認 |
 | MUC／N88 UTI | PASS | `plutil`、ad-hoc署名を検証し、Launch Services経由で`.n88`を開いてN88-BASIC type判定を確認 |
-| Dark Mode editor表示 | PASS | `sampl1.muc`で本文、46pt幅の行番号、status、compile transcriptを同時表示し、縦scroll時の行番号追従を確認 |
+| Dark Mode editor表示 | PASS | `sampl1.muc`で本文、46pt幅の行番号、status、compile transcriptを同時表示。行番号をAppKitのview座標変換で描画し、上端／中間／下端への縦scrollと上端への復帰時に本文と追従すること、上下端の部分行が本文と同じ境界でclipされbaselineが一致することを確認 |
 | sandbox bookmark | N/A | 現在のappはsandboxを採用していない。採用時だけ文書外resource directoryをbookmark化する |
 | Phase 4 shortcut | BLOCKED | F5／F12、Esc、Control-F1は再生・停止・早送りUIと同時にPhase 4で有効化する |
 

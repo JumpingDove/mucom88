@@ -1200,6 +1200,10 @@ Phase 3完了時点で利用できる機能は次の通り。
 - 新規文書、MUC／N88／plain textを開く、safe save、別名保存、未保存文書を閉じる際の標準確認
 - UTF-8／BOM／CP932／Shift_JISの判定と明示選択、表現不能文字の拒否、混在改行の保持
 - monospaced fontの複数行MML編集、Undo/Redo、Cut/Copy/Paste、46pt幅の行番号gutter
+- 行番号は`NSTextView`のdocument座標から`NSRulerView`の表示座標へ
+  `convertPoint:fromView:`／`convertRect:fromView:`で変換し、縦scroll offset、view hierarchy、
+  flipped座標系へ追従。本文の`visibleRect`で行番号もclipし、Text Kitのglyph baselineへ揃えて
+  上下端の部分表示を一致させる
 - AppKitの動的system colorによるLight／Dark Mode表示。Dark Modeでは本文、status、compile transcriptを実機確認済み
 - macOS標準find barによる検索／置換、Command-G／Shift-Command-G、Command-Lによる指定行移動
 - window titleへのfile名表示、MUC／N88／plain textの種別表示とUTI登録
