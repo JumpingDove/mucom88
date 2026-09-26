@@ -32,10 +32,17 @@ int main()
     CHECK(test, audio.Diagnostics().open);
     std::array<int, 256 * 2> samples{};
     CHECK(test, audio.WriteFrames(samples.data(), 256) == 256);
+    audio.RecordRenderedFrames(256);
     CHECK(test, audio.Diagnostics().queued_frames == 256);
+    CHECK(test, audio.Diagnostics().rendered_frames == 256);
+    audio.RecordDroppedFrames(3);
+    CHECK(test, audio.Diagnostics().dropped_frames == 3);
     audio.Start();
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
     audio.Pause();
+
+    CHECK(test, audio.WriteFrames(samples.data(), 1) == 1);
+    CHECK(test, audio.Diagnostics().refill_events == 1);
 
     audio.MarkDeviceLost();
     CHECK(test, audio.Diagnostics().device_lost);

@@ -16,6 +16,9 @@ namespace {
 
 std::string ResolveResourceDirectory(const CompileRequest &request)
 {
+    if (!request.resources.document_directory.empty()) {
+        return request.resources.document_directory;
+    }
     if (!request.resource_directory.empty()) return request.resource_directory;
     if (request.source_path.empty()) return std::string();
     return std::filesystem::path(request.source_path).parent_path().string();
@@ -170,6 +173,8 @@ public:
         }
         song->source_path = request.source_path;
         song->resource_directory = resourceDirectory;
+        song->resources = request.resources;
+        song->resources.document_directory = resourceDirectory;
         song->document_id = request.document_id;
         song->revision = request.revision;
         song->content_id = ContentId(song->mub_bytes);

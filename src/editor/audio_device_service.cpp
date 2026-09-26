@@ -53,6 +53,7 @@ public:
             --queuedSamples;
         }
         if (underflow) ++underruns;
+        if (started && queuedSamples == 0) refillPending = true;
         condition.notify_all();
     }
 
@@ -69,10 +70,12 @@ public:
     std::uint64_t underruns = 0;
     std::uint64_t droppedFrames = 0;
     std::uint64_t renderedFrames = 0;
+    std::uint64_t refillEvents = 0;
     bool initialized = false;
     bool started = false;
     bool shuttingDown = false;
     bool deviceLost = false;
+    bool refillPending = false;
 };
 
 AudioDeviceService::AudioDeviceService() : impl_(new Impl()) {}
@@ -180,9 +183,11 @@ ServiceResult<AudioDeviceOpenResult> AudioDeviceService::Open(
         impl_->underruns = 0;
         impl_->droppedFrames = 0;
         impl_->renderedFrames = 0;
+        impl_->refillEvents = 0;
         impl_->shuttingDown = false;
         impl_->started = false;
         impl_->deviceLost = false;
+        impl_->refillPending = false;
         result.value = {*selected, format, impl_->format};
     }
     return result;
@@ -273,15 +278,29 @@ std::size_t AudioDeviceService::WriteFrames(const int *samples,
     const std::size_t availableFrames =
         (impl_->ring.size() - impl_->queuedSamples) / kChannels;
     const std::size_t writtenFrames = std::min(frames, availableFrames);
+    if (writtenFrames > 0 && impl_->refillPending) {
+        ++impl_->refillEvents;
+        impl_->refillPending = false;
+    }
     for (std::size_t index = 0; index < writtenFrames * kChannels; ++index) {
         const int value = std::max(-32768, std::min(32767, samples[index]));
         impl_->ring[impl_->writePosition] = static_cast<std::int16_t>(value);
         impl_->writePosition = (impl_->writePosition + 1) % impl_->ring.size();
         ++impl_->queuedSamples;
     }
-    impl_->renderedFrames += writtenFrames;
-    if (writtenFrames < frames) impl_->droppedFrames += frames - writtenFrames;
     return writtenFrames;
+}
+
+void AudioDeviceService::RecordRenderedFrames(std::size_t frames)
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->renderedFrames += frames;
+}
+
+void AudioDeviceService::RecordDroppedFrames(std::size_t frames)
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->droppedFrames += frames;
 }
 
 AudioDiagnostics AudioDeviceService::Diagnostics() const
@@ -291,6 +310,7 @@ AudioDiagnostics AudioDeviceService::Diagnostics() const
     diagnostics.underruns = impl_->underruns;
     diagnostics.dropped_frames = impl_->droppedFrames;
     diagnostics.rendered_frames = impl_->renderedFrames;
+    diagnostics.refill_events = impl_->refillEvents;
     diagnostics.queued_frames = impl_->queuedSamples / kChannels;
     diagnostics.open = impl_->device != 0;
     diagnostics.started = impl_->started;

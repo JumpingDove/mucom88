@@ -7,6 +7,7 @@
 #include "editor/export_service.h"
 #include "editor/mucom_compile_service.h"
 #include "editor/playback_session.h"
+#include "editor/playback_coordinator.h"
 #include "editor/service_types.h"
 #include "editor/voice_service.h"
 
@@ -24,6 +25,7 @@ public:
     std::shared_ptr<AudioDeviceService> audio;
     std::shared_ptr<MucomCompileService> compiler;
     std::shared_ptr<PlaybackSession> playback;
+    std::shared_ptr<PlaybackCoordinator> playback_coordinator;
     std::shared_ptr<ExportService> exporter;
     std::shared_ptr<VoiceService> voices;
 };

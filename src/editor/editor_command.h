@@ -1,6 +1,8 @@
 #ifndef MUCOM88_EDITOR_COMMAND_H
 #define MUCOM88_EDITOR_COMMAND_H
 
+#include "editor/playback_session.h"
+
 namespace mucom88 {
 
 enum class EditorCommand {
@@ -11,8 +13,10 @@ enum class EditorCommand {
     GoToLine,
     Compile,
     CompileAndPlay,
+    PauseResume,
     Stop,
-    FastForward
+    FastForward,
+    Reconnect
 };
 
 struct EditorCommandState {
@@ -20,6 +24,8 @@ struct EditorCommandState {
     bool has_text_view = false;
     bool compiler_ready = false;
     bool playback_ui_ready = false;
+    bool reconnect_available = false;
+    PlaybackState playback_state = PlaybackState::Idle;
 };
 
 bool IsEditorCommandEnabled(EditorCommand command,

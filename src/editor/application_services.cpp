@@ -16,12 +16,15 @@ ApplicationServices::ApplicationServices(CompletionDispatcher dispatcher)
     audio = std::make_shared<AudioDeviceService>();
     compiler = std::make_shared<MucomCompileService>(dispatcher);
     playback = std::make_shared<PlaybackSession>(audio, dispatcher);
+    playback_coordinator =
+        std::make_shared<PlaybackCoordinator>(compiler, playback);
     exporter = std::make_shared<ExportService>(dispatcher);
     voices = std::make_shared<VoiceService>();
 }
 
 ApplicationServices::~ApplicationServices()
 {
+    playback_coordinator.reset();
     if (playback) {
         playback->ClearObserver();
         playback->Stop();

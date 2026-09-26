@@ -67,6 +67,7 @@ add_library(mucom88_runtime STATIC
     editor/mucom_compile_service.cpp
     editor/audio_device_service.cpp
     editor/playback_session.cpp
+    editor/playback_coordinator.cpp
     editor/export_service.cpp
     editor/voice_service.cpp
     plugin/plugin.cpp

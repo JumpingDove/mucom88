@@ -35,6 +35,7 @@ struct AudioDiagnostics {
     std::uint64_t underruns = 0;
     std::uint64_t dropped_frames = 0;
     std::uint64_t rendered_frames = 0;
+    std::uint64_t refill_events = 0;
     std::size_t queued_frames = 0;
     bool open = false;
     bool started = false;
@@ -62,6 +63,8 @@ public:
     // them to the negotiated signed 16-bit output format.
     std::size_t WriteFrames(const int *samples, std::size_t frames,
         const CancellationToken &cancellation = {});
+    void RecordRenderedFrames(std::size_t frames);
+    void RecordDroppedFrames(std::size_t frames);
     AudioDiagnostics Diagnostics() const;
 
 private:

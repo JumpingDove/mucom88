@@ -878,12 +878,13 @@ ctest --test-dir build --output-on-failure
 | `editor_core_test` | document保存、相対resource compile、再生開始・停止、NUL拒否 |
 | `document_service_test` | UTF-8／CP932、改行、atomic save、外部変更競合、recovery |
 | `editor_line_model_test` | Unicode、最終空行、論理行とUTF-8 byte range |
-| `editor_command_test` | editor commandの実行可否とPhase 4 commandの無効状態 |
+| `editor_command_test` | editor commandとplayback state別のPause／Stop／早送り／Reconnect実行可否 |
 | `document_recovery_test` | recovery世代上限、scan、restore、cleanup、checksum |
 | `voice_service_test` | 256音色、8192 byte round trip、field検証、保存 |
 | `compile_service_test` | owned MUB、構造化diagnostic、非同期compile |
 | `operation_lifecycle_test` | operation ID、cancel、stale revision、破棄後callback |
 | `playback_session_test` | play／pause／resume／stop、速度、session切替、device loss |
+| `playback_coordinator_test` | stale play intent、複数document／observer、Stop、document close |
 | `playback_end_detection_test` | 1.7／1.5／EMの有限曲、loop曲、PCM曲の終端規則 |
 | `monitor_snapshot_test` | A～K、count、session ID、immutable snapshot |
 | `audio_device_service_test` | SDL dummy列挙、format拒否、切断、再接続 |
@@ -1446,3 +1447,40 @@ Phase 2固有の10件は`document_service_test`、`voice_service_test`、`compil
 Core APIは実装済みだが、editor windowのtransport、monitor view、audio device picker、export save panel、
 FM音色editorはまだ接続していない。実CoreAudio deviceでの60分連続再生、聴感、切断試験もPhase 4で行う。
 したがってPhase 2完了はGUI再生機能や配布版の完成を意味しない。
+
+## 20. Phase 4再生GUIの基盤（4-0）
+
+2026-09-26にPhase 4の最初の実装単位として、GUI接続より先にapplication全体の再生調停と値型contractを
+追加した。transport button、shortcut、resource picker、audio device pickerはまだ接続していない。
+
+### 20.1 resource snapshot
+
+`ResourceConfiguration`はdocument directory、default PCM／voice、外部ROM directory、rhythm directory、
+外部ROM使用flagを保持する。`DocumentService`が作る`CompileRequest`からcompile結果の`CompiledSong`まで
+値copyされるため、非同期compile中に後続のUI設定が変化しても、その結果が参照するresource snapshotは
+変化しない。各resourceの優先順位、検証、実読込はPhase 4の4-1で接続する。
+
+### 20.2 application共有Coordinator
+
+`ApplicationServices`は`PlaybackCoordinator`を1つ所有する。Coordinatorだけが単一の`PlaybackSession`
+observerを使用し、document側にはtoken付きの複数購読を提供する。compile-and-play要求にはapplication全体の
+世代番号を付け、前要求のcancel、Stop後の遅延完了、別documentから届いたstale結果を再生しない。active
+documentを閉じた場合は画面のない再生を残さず停止する。
+
+`EditorCommandState`は`PlaybackState`を入力にし、Pause／Resume、Stop、FastForward、Reconnectを状態別に
+有効化する。AppKitのmenu、button、F5／F12、Esc、Control-F1への接続は4-2で行う。
+
+### 20.3 audio診断契約
+
+`AudioDiagnostics`へ`refill_events`を追加した。`rendered_frames`はruntimeが生成したframe数、
+`dropped_frames`はringへ渡せず実際に破棄したframe数と定義する。部分書込み後に再試行したframeをdropへ
+加算しない。初回prefillはrefillに含めず、再生開始後にbufferが空になった後の供給再開だけを数える。
+
+### 20.4 buildと検証
+
+Release構成で`MUCOM88Editor.app`を含むbuildに成功し、新設した`playback_coordinator_test`を含む全21件の
+CTestに成功した。Coordinator試験は2 documentの競合、複数observer、pause、active document close、
+Stop後の遅延compile無効化を確認する。`compile_service_test`はresource snapshot、
+`audio_device_service_test`はrender／drop／refill、`editor_command_test`はplayback state別commandを確認する。
+
+Debug、ASan／UBSan、TSanは4-5で実施する。実CoreAudio device、長時間再生、聴感確認は4-6まで未完了である。

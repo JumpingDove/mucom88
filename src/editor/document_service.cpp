@@ -784,6 +784,7 @@ CompileRequest DocumentService::MakeCompileRequest() const
     request.utf8_text = current.utf8_text;
     request.source_path = current.path;
     request.resource_directory = current.resource_directory;
+    request.resources.document_directory = current.resource_directory;
     request.document_id = current.document_id;
     request.revision = current.revision;
     return request;

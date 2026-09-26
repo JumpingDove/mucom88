@@ -41,6 +41,10 @@ int main()
     request.utf8_text = mucom88_test::ReadBinary(path);
     request.source_path = path.string();
     request.resource_directory = path.parent_path().string();
+    request.resources.document_directory = path.parent_path().string();
+    request.resources.default_pcm_file = "selected-default.pcm";
+    request.resources.default_voice_file = "selected-default.voice";
+    request.resources.rhythm_directory = "selected-rhythm";
     request.document_id = 99;
     request.revision = 3;
     mucom88::OperationHandle handle;
@@ -51,6 +55,14 @@ int main()
             CHECK(test, result.document_id == 99);
             CHECK(test, result.revision == 3);
             CHECK(test, result.Succeeded());
+            CHECK(test, result.song->resources.document_directory ==
+                path.parent_path().string());
+            CHECK(test, result.song->resources.default_pcm_file ==
+                "selected-default.pcm");
+            CHECK(test, result.song->resources.default_voice_file ==
+                "selected-default.voice");
+            CHECK(test, result.song->resources.rhythm_directory ==
+                "selected-rhythm");
             completed = true;
             condition.notify_all();
         });

@@ -248,12 +248,16 @@ public:
                 state != PlaybackState::Playing)) return;
         std::vector<int> samples(kRenderFrames * 2, 0);
         runtime->RenderAudio(samples.data(), kRenderFrames);
+        audio->RecordRenderedFrames(kRenderFrames);
         std::size_t written = 0;
         while (written < kRenderFrames) {
             const std::size_t count = audio->WriteFrames(
                 samples.data() + written * 2, kRenderFrames - written);
             if (count == 0) break;
             written += count;
+        }
+        if (written < kRenderFrames) {
+            audio->RecordDroppedFrames(kRenderFrames - written);
         }
         UpdateMonitor();
         const AudioDiagnostics diagnostics = audio->Diagnostics();

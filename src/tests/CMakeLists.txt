@@ -54,6 +54,13 @@ mucom88_set_test_properties(playback_session_test 30)
 set_tests_properties(playback_session_test PROPERTIES
     ENVIRONMENT "SDL_AUDIODRIVER=dummy")
 
+mucom88_add_test_executable(playback_coordinator_test
+    test_playback_coordinator.cpp)
+add_test(NAME playback_coordinator_test COMMAND playback_coordinator_test)
+mucom88_set_test_properties(playback_coordinator_test 45)
+set_tests_properties(playback_coordinator_test PROPERTIES
+    ENVIRONMENT "SDL_AUDIODRIVER=dummy")
+
 mucom88_add_test_executable(playback_end_detection_test
     test_playback_end_detection.cpp)
 add_test(NAME playback_end_detection_test COMMAND playback_end_detection_test)

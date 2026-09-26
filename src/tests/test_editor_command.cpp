@@ -27,7 +27,29 @@ int main()
     state.playback_ui_ready = true;
     CHECK(test, mucom88::IsEditorCommandEnabled(
         mucom88::EditorCommand::CompileAndPlay, state));
+    CHECK(test, !mucom88::IsEditorCommandEnabled(
+        mucom88::EditorCommand::PauseResume, state));
+    CHECK(test, !mucom88::IsEditorCommandEnabled(
+        mucom88::EditorCommand::Stop, state));
+    state.playback_state = mucom88::PlaybackState::Playing;
+    CHECK(test, mucom88::IsEditorCommandEnabled(
+        mucom88::EditorCommand::PauseResume, state));
+    CHECK(test, mucom88::IsEditorCommandEnabled(
+        mucom88::EditorCommand::Stop, state));
     CHECK(test, mucom88::IsEditorCommandEnabled(
         mucom88::EditorCommand::FastForward, state));
+    CHECK(test, !mucom88::IsEditorCommandEnabled(
+        mucom88::EditorCommand::Reconnect, state));
+    state.playback_state = mucom88::PlaybackState::DeviceLost;
+    state.reconnect_available = true;
+    CHECK(test, mucom88::IsEditorCommandEnabled(
+        mucom88::EditorCommand::Reconnect, state));
+    CHECK(test, !mucom88::IsEditorCommandEnabled(
+        mucom88::EditorCommand::FastForward, state));
+    state.playback_state = mucom88::PlaybackState::Stopping;
+    CHECK(test, !mucom88::IsEditorCommandEnabled(
+        mucom88::EditorCommand::CompileAndPlay, state));
+    CHECK(test, !mucom88::IsEditorCommandEnabled(
+        mucom88::EditorCommand::Stop, state));
     return test.ExitCode();
 }

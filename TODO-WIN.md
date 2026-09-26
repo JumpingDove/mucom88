@@ -871,13 +871,35 @@ user-facingなautomatic playerを先取りしない。
 
 | 段階 | 実施内容 | 完了gate |
 |---|---|---|
-| 4-0 | resource値型、Coordinator、command状態、診断値の定義 | stale play intent、複数document、drop／refill単体試験 |
+| 4-0（完了） | resource値型、Coordinator、command状態、診断値の定義 | stale play intent、複数document、drop／refill単体試験 |
 | 4-1 | default PCM／voice、rhythm、外部ROMの明示path | 起動directory非依存、欠落resourceの明確なerror |
 | 4-2 | compile-and-play、transport、progress、shortcut | F5／F12、Esc、Control-F1とbutton／menuの結果が一致 |
 | 4-3 | device picker、hotplug、DeviceLost、Reconnect、format表示 | 切断時に無断切替せず、選択後に曲頭から再接続 |
 | 4-4 | 診断表示、fade-in／out、曲末hook | 反復操作でhangせず、sample不連続試験が成功 |
 | 4-5 | dummy／sanitizer回帰 | 全既存CTestとPhase 4追加試験がDebug／Release／sanitizerで成功 |
 | 4-6 | 実CoreAudio受入 | 内蔵speakerでPCM曲を60分以上再生し、既知の音切れ、click、tempo変動なし |
+
+**4-0完了日: 2026-09-26**
+
+`ResourceConfiguration`を追加し、document directory、default PCM／voice、外部ROM、rhythm directoryと
+外部ROM使用flagを非同期`CompileRequest`から`CompiledSong`へ値copyするcontractを実装した。この段階では
+resourceの実読込と選択UIは実装せず、4-1へ残している。
+
+`PlaybackCoordinator`をapplication共有serviceとして追加し、`PlaybackSession`の唯一のobserverになった。
+token付き複数購読、application全体のplay intent世代、前要求cancel、Stopによる未完了intentの無効化、
+別documentのstale compile結果破棄、active document close時停止を実装した。AppKitからの利用は4-2で行う。
+
+`EditorCommandState`は`PlaybackState`を受け取り、Pause／Resume、Stop、FastForward、Reconnectを状態別に
+有効化する。`Stopping`中のCompile & Playと重複Stop、`DeviceLost`以外のReconnectを禁止した。
+
+audio診断へ`refill_events`を追加し、runtime生成frameと実際に破棄したframeをPlaybackSession側で計数するように
+変更した。部分書込み後に再試行するframeをdropとして数えていた従来の意味を修正し、初回prefillはrefillへ
+含めない。
+
+`playback_coordinator_test`を追加し、stale play intent、2 documentの競合、複数observer、pause、active
+document close、Stop後の遅延compileを検証した。`editor_command_test`、`compile_service_test`、
+`audio_device_service_test`も新しいcontractを検証する。Release buildと全21 CTestは成功した。Debugおよび
+sanitizer全構成は4-5のgateとして未実施である。
 
 ### Phase 4で追加する常設試験
 
@@ -1005,8 +1027,8 @@ Universal BinaryとIntel Macは標準版の完了条件にしない。
 7. Phase 9～10: 署名済み配布物と最終受入
 8. 拡張profile: 実chip、外部driver。標準版後または外部仕様・hardware確保後
 
-次に実装すべき対象は、Phase 4の再生serviceのGUI接続と実audio device受入である。Windows golden生成、
-VM導入、Windows CLI比較は先行条件にしない。
+次に実装すべき対象はPhase 4の4-1であり、default PCM／voice、rhythm、外部ROMをprocess current directoryに
+依存しない明示pathで解決する。Windows golden生成、VM導入、Windows CLI比較は先行条件にしない。
 
 ## 実施履歴
 
@@ -1028,3 +1050,4 @@ VM導入、Windows CLI比較は先行条件にしない。
 | 2026-09-24 | Phase 3完了 | save acknowledgement、encoding／混在改行／type、行番号、find／replace、diagnostic link、複数document、drop、recovery／backup、shortcut、MUC／N88 UTIを実装 | Release／Debug／ASan+UBSan／TSanで全20 CTest成功。実GUIで検索、行移動、compile error、複数window、crash recovery、N88 openを確認 |
 | 2026-09-25 | Phase 3 Dark Mode／行番号表示修正 | `LineNumberRulerView`の幅を46ptへ固定し、ruler背景がeditor全体を覆ってMUC本文を隠す問題を修正。editor／messageへ動的system colorを適用。行番号の位置と表示領域をAppKitでtext viewからrulerへ変換し、本文と同じ境界でclipしてglyph baselineへ整列 | Dark Mode実GUIで`sampl1.muc`本文、行番号、status、compile transcriptを表示。scrollbarの上端／中間／下端／端数位置と上端復帰時に追従し、上下端の部分行で本文と行番号のclipとbaselineが一致することを確認 |
 | 2026-09-25 | Phase 4計画具体化 | application単位Coordinator、stale compile抑止、transport／shortcut、resource解決、device hotplug／再接続、audio診断、click対策、Phase 5との次曲境界を確定 | 現行のPlaybackSession、AudioDeviceService、AppKit、CLI resource経路、Windows HSP操作、GUI受入仕様を照合。実装・試験は未着手 |
+| 2026-09-26 | Phase 4 4-0完了 | ResourceConfiguration、application共有PlaybackCoordinator、play intent世代、状態別command、refill／drop診断契約を実装 | `playback_coordinator_test`を追加。Release buildと全21 CTest成功。GUI接続、resource実読込、実deviceは未着手 |

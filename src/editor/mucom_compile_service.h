@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "editor/service_types.h"
+#include "editor/resource_configuration.h"
 
 namespace mucom88 {
 
@@ -44,6 +45,7 @@ struct CompiledSong {
     std::array<int, 11> channel_loop_counts{};
     std::string source_path;
     std::string resource_directory;
+    ResourceConfiguration resources;
     DocumentId document_id = 0;
     Revision revision = 0;
     std::string content_id;
@@ -53,6 +55,7 @@ struct CompileRequest {
     std::string utf8_text;
     std::string source_path;
     std::string resource_directory;
+    ResourceConfiguration resources;
     DriverMode driver = DriverMode::Automatic;
     int options = 0;
     DocumentId document_id = 0;
