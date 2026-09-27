@@ -85,6 +85,19 @@ NSString *PlaybackStateName(mucom88::PlaybackState state)
     return @"Unknown";
 }
 
+NSString *AudioFormatText(const mucom88::AudioDeviceOpenResult &opened)
+{
+    const auto &requested = opened.requested;
+    const auto &obtained = opened.obtained;
+    return [NSString stringWithFormat:
+        @"%@ • requested %d Hz/%d-bit/%d ch/%d frames • obtained %d Hz/%d-bit/%d ch/%d frames",
+        StringFromUtf8(opened.device.name), requested.sample_rate,
+        requested.bits_per_sample, requested.channels,
+        requested.frames_per_buffer, obtained.sample_rate,
+        obtained.bits_per_sample, obtained.channels,
+        obtained.frames_per_buffer];
+}
+
 void CreateBackup(NSURL *url, mucom88::DocumentId documentId)
 {
     if (url == nil || !url.isFileURL ||
@@ -373,10 +386,14 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     NSButton *_stopButton;
     NSButton *_fastForwardButton;
     NSPopUpButton *_speedPopup;
+    NSPopUpButton *_devicePopup;
+    NSButton *_reconnectButton;
+    NSTextField *_audioFormatLabel;
     LineNumberRulerView *_lineRuler;
     NSTimer *_recoveryTimer;
     NSTimer *_playbackTimer;
     mucom88::PlaybackSubscriptionId _playbackSubscription;
+    std::uint64_t _audioDeviceGeneration;
     NSInteger _fastForwardMultiplier;
     BOOL _fastForwarding;
     NSString *_restoredRecoveryPath;
@@ -396,7 +413,10 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
 - (IBAction)chooseRhythmDirectory:(id)sender;
 - (IBAction)toggleExternalROM:(id)sender;
 - (IBAction)clearResourceOverrides:(id)sender;
+- (IBAction)changeAudioDevice:(id)sender;
+- (IBAction)reconnectAudioDevice:(id)sender;
 - (void)updatePlaybackUI;
+- (void)refreshAudioDevices:(BOOL)force;
 - (mucom88::CompileRequest)configuredCompileRequest;
 - (IBAction)goToLine:(id)sender;
 - (IBAction)changeEncoding:(id)sender;
@@ -488,6 +508,22 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     [_playbackLabel setContentHuggingPriority:NSLayoutPriorityDefaultLow
         forOrientation:NSLayoutConstraintOrientationHorizontal];
 
+    _devicePopup = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
+    _devicePopup.target = self;
+    _devicePopup.action = @selector(changeAudioDevice:);
+    _reconnectButton = [NSButton buttonWithTitle:@"Reconnect"
+        target:self action:@selector(reconnectAudioDevice:)];
+    _audioFormatLabel = [NSTextField labelWithString:
+        @"Audio: 44100 Hz, signed 16-bit stereo requested"];
+    _audioFormatLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    NSStackView *deviceBar = [NSStackView stackViewWithViews:
+        @[_devicePopup, _reconnectButton, _audioFormatLabel]];
+    deviceBar.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+    deviceBar.alignment = NSLayoutAttributeCenterY;
+    deviceBar.spacing = 10.0;
+    [_audioFormatLabel setContentHuggingPriority:NSLayoutPriorityDefaultLow
+        forOrientation:NSLayoutConstraintOrientationHorizontal];
+
     NSScrollView *editorScroll = [[NSScrollView alloc] initWithFrame:NSZeroRect];
     editorScroll.hasVerticalScroller = YES;
     editorScroll.hasHorizontalScroller = YES;
@@ -537,7 +573,7 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     messageScroll.documentView = _messageView;
 
     NSStackView *layout = [NSStackView stackViewWithViews:
-        @[controlBar, playbackBar, editorScroll, messageScroll]];
+        @[controlBar, deviceBar, playbackBar, editorScroll, messageScroll]];
     layout.translatesAutoresizingMaskIntoConstraints = NO;
     layout.orientation = NSUserInterfaceLayoutOrientationVertical;
     layout.alignment = NSLayoutAttributeLeading;
@@ -550,6 +586,8 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
         [layout.bottomAnchor constraintEqualToAnchor:content.bottomAnchor constant:-12.0],
         [controlBar.widthAnchor constraintEqualToAnchor:layout.widthAnchor],
         [playbackBar.widthAnchor constraintEqualToAnchor:layout.widthAnchor],
+        [deviceBar.widthAnchor constraintEqualToAnchor:layout.widthAnchor],
+        [_devicePopup.widthAnchor constraintGreaterThanOrEqualToConstant:220.0],
         [_playbackProgress.widthAnchor constraintGreaterThanOrEqualToConstant:180.0],
         [editorScroll.widthAnchor constraintEqualToAnchor:layout.widthAnchor],
         [messageScroll.widthAnchor constraintEqualToAnchor:layout.widthAnchor],
@@ -562,18 +600,25 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     _updatingEditor = NO;
     [_lineRuler reloadLineNumbers];
     [self updateStatus];
+    [self refreshAudioDevices:YES];
     __weak MucomDocument *weakSelf = self;
     _playbackSubscription = _services->playback_coordinator->Subscribe(
         [weakSelf](mucom88::PlaybackCoordinatorSnapshot snapshot) {
             (void)snapshot;
             MucomDocument *document = weakSelf;
-            if (document != nil) [document updatePlaybackUI];
+            if (document != nil) {
+                [document refreshAudioDevices:NO];
+                [document updatePlaybackUI];
+            }
         });
     _playbackTimer = [NSTimer scheduledTimerWithTimeInterval:(1.0 / 15.0)
         repeats:YES block:^(NSTimer *timer) {
             (void)timer;
             MucomDocument *document = weakSelf;
-            if (document != nil) [document updatePlaybackUI];
+            if (document != nil) {
+                [document refreshAudioDevices:NO];
+                [document updatePlaybackUI];
+            }
         }];
     [self updatePlaybackUI];
     [self addWindowController:[[NSWindowController alloc] initWithWindow:window]];
@@ -850,17 +895,100 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     return request;
 }
 
+- (void)refreshAudioDevices:(BOOL)force
+{
+    if (_devicePopup == nil || _services == nullptr) return;
+    const std::uint64_t generation = _services->audio->DeviceGeneration();
+    if (!force && generation == _audioDeviceGeneration) return;
+    const auto devices = _services->playback_coordinator->EnumerateAudioOutputs();
+    if (!devices.Succeeded()) {
+        _statusLabel.stringValue = StringFromUtf8(devices.error.message);
+        return;
+    }
+    const auto snapshot = _services->playback_coordinator->Snapshot();
+    [_devicePopup removeAllItems];
+    BOOL selectedFound = NO;
+    for (const auto &device : devices.value) {
+        [_devicePopup addItemWithTitle:StringFromUtf8(device.name)];
+        NSMenuItem *item = _devicePopup.lastItem;
+        item.representedObject = StringFromUtf8(device.id);
+        if (device.id == snapshot.selected_audio_device_id) {
+            [_devicePopup selectItem:item];
+            selectedFound = YES;
+        }
+    }
+    if (!selectedFound && !snapshot.selected_audio_device_id.empty()) {
+        NSString *title = [NSString stringWithFormat:@"Unavailable: %@",
+            StringFromUtf8(snapshot.selected_audio_device_name)];
+        [_devicePopup addItemWithTitle:title];
+        _devicePopup.lastItem.representedObject =
+            StringFromUtf8(snapshot.selected_audio_device_id);
+        [_devicePopup selectItem:_devicePopup.lastItem];
+    }
+    _audioDeviceGeneration = devices.value.empty()
+        ? generation : devices.value.front().generation;
+}
+
+- (IBAction)changeAudioDevice:(id)sender
+{
+    (void)sender;
+    NSString *identifier = [_devicePopup.selectedItem.representedObject
+        isKindOfClass:NSString.class]
+        ? _devicePopup.selectedItem.representedObject : @"default";
+    const mucom88::ServiceError error =
+        _services->playback_coordinator->SelectAudioOutput(
+            identifier.UTF8String == nullptr ? "default" : identifier.UTF8String);
+    if (error) {
+        _statusLabel.stringValue = StringFromUtf8(error.message);
+        [self refreshAudioDevices:YES];
+    } else {
+        _statusLabel.stringValue = [NSString stringWithFormat:@"Audio output: %@",
+            _devicePopup.selectedItem.title];
+    }
+    [self updatePlaybackUI];
+}
+
+- (IBAction)reconnectAudioDevice:(id)sender
+{
+    (void)sender;
+    const mucom88::OperationHandle operation =
+        _services->playback_coordinator->Reconnect();
+    if (!operation.IsValid()) {
+        _statusLabel.stringValue = @"No disconnected playback is available";
+    } else {
+        _statusLabel.stringValue = @"Reconnecting from the beginning…";
+    }
+}
+
 - (void)updatePlaybackUI
 {
     if (_playbackLabel == nil || _services == nullptr) return;
     const auto snapshot = _services->playback_coordinator->Snapshot();
     const auto document = _model->Snapshot();
+    NSString *selectedDevice = StringFromUtf8(snapshot.selected_audio_device_id);
+    for (NSMenuItem *item in _devicePopup.itemArray) {
+        if ([item.representedObject isEqual:selectedDevice]) {
+            [_devicePopup selectItem:item];
+            break;
+        }
+    }
     NSString *owner = snapshot.document_id != 0 &&
         snapshot.document_id != document.document_id ? @"Other document • " : @"";
     NSString *detail = @"";
     if (snapshot.error) detail = [NSString stringWithFormat:@" • %@",
         StringFromUtf8(snapshot.error.message)];
     const auto monitor = snapshot.monitor;
+    if (snapshot.audio_device) {
+        _audioFormatLabel.stringValue = AudioFormatText(*snapshot.audio_device);
+    } else {
+        _audioFormatLabel.stringValue =
+            @"Audio: requested 44100 Hz, signed 16-bit, 2 channels, 1024 frames/buffer";
+    }
+    if (snapshot.error.code == mucom88::ServiceErrorCode::UnsupportedFormat ||
+        snapshot.error.code == mucom88::ServiceErrorCode::DeviceUnavailable) {
+        _audioFormatLabel.stringValue = StringFromUtf8(snapshot.error.message);
+    }
+    _audioFormatLabel.toolTip = _audioFormatLabel.stringValue;
     if (snapshot.state != mucom88::PlaybackState::Idle &&
         monitor != nullptr && monitor->max_count > 0) {
         _playbackProgress.indeterminate = NO;
@@ -891,6 +1019,7 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     state.has_text_view = _editorView != nil;
     state.compiler_ready = _services->compiler->IsReady();
     state.playback_ui_ready = true;
+    state.reconnect_available = snapshot.reconnect_available;
     state.playback_state = snapshot.state;
     _playButton.enabled = mucom88::IsEditorCommandEnabled(
         mucom88::EditorCommand::CompileAndPlay, state);
@@ -898,6 +1027,12 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
         mucom88::EditorCommand::PauseResume, state);
     _stopButton.enabled = mucom88::IsEditorCommandEnabled(
         mucom88::EditorCommand::Stop, state);
+    _reconnectButton.enabled = mucom88::IsEditorCommandEnabled(
+        mucom88::EditorCommand::Reconnect, state);
+    _devicePopup.enabled = snapshot.state == mucom88::PlaybackState::Idle ||
+        snapshot.state == mucom88::PlaybackState::Finished ||
+        snapshot.state == mucom88::PlaybackState::Failed ||
+        snapshot.state == mucom88::PlaybackState::DeviceLost;
     const BOOL fastEnabled = mucom88::IsEditorCommandEnabled(
         mucom88::EditorCommand::FastForward, state);
     _fastForwardButton.enabled = fastEnabled;
@@ -1106,8 +1241,11 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     state.compiler_ready = _services != nullptr && _services->compiler->IsReady();
     state.playback_ui_ready = _services != nullptr &&
         _services->playback_coordinator != nullptr;
-    if (state.playback_ui_ready) state.playback_state =
-        _services->playback_coordinator->Snapshot().state;
+    if (state.playback_ui_ready) {
+        const auto playback = _services->playback_coordinator->Snapshot();
+        state.playback_state = playback.state;
+        state.reconnect_available = playback.reconnect_available;
+    }
     if (item.action == @selector(compileDocument:)) {
         return mucom88::IsEditorCommandEnabled(
             mucom88::EditorCommand::Compile, state);
@@ -1124,6 +1262,14 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
             mucom88::EditorCommand::PauseResume, state);
     if (item.action == @selector(stopPlayback:)) return
         mucom88::IsEditorCommandEnabled(mucom88::EditorCommand::Stop, state);
+    if (item.action == @selector(reconnectAudioDevice:)) return
+        mucom88::IsEditorCommandEnabled(
+            mucom88::EditorCommand::Reconnect, state);
+    if (item.action == @selector(changeAudioDevice:)) return
+        state.playback_state == mucom88::PlaybackState::Idle ||
+        state.playback_state == mucom88::PlaybackState::Finished ||
+        state.playback_state == mucom88::PlaybackState::Failed ||
+        state.playback_state == mucom88::PlaybackState::DeviceLost;
     if (item.action == @selector(toggleFastForward:) ||
         item.action == @selector(beginMomentaryFastForward:) ||
         item.action == @selector(endMomentaryFastForward:)) return
@@ -1199,6 +1345,7 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
 @interface MucomAppDelegate : NSObject <NSApplicationDelegate> {
     std::shared_ptr<mucom88::ApplicationServices> _services;
     id _eventMonitor;
+    NSTimer *_audioDeviceEventTimer;
     BOOL _controlF1Held;
 }
 @end
@@ -1298,6 +1445,8 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     AddMenuItem(playbackMenu, @"Pause / Resume (Esc)",
         @selector(pauseResumePlayback:), @"");
     AddMenuItem(playbackMenu, @"Stop", @selector(stopPlayback:), @"");
+    AddMenuItem(playbackMenu, @"Reconnect Audio Output",
+        @selector(reconnectAudioDevice:), @"");
     AddMenuItem(playbackMenu, @"Fast Forward", @selector(toggleFastForward:), @"");
     [playbackMenu addItem:NSMenuItem.separatorItem];
     NSMenuItem *resourcesItem = AddMenuItem(
@@ -1373,6 +1522,14 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
             }
             return event;
         }];
+    __weak MucomAppDelegate *weakAudioDelegate = self;
+    _audioDeviceEventTimer = [NSTimer scheduledTimerWithTimeInterval:0.2
+        repeats:YES block:^(NSTimer *timer) {
+            (void)timer;
+            MucomAppDelegate *delegate = weakAudioDelegate;
+            if (delegate == nil || delegate->_services == nullptr) return;
+            delegate->_services->audio->PumpDeviceEvents();
+        }];
 }
 
 - (void)applicationDidResignActive:(NSNotification *)notification
@@ -1434,6 +1591,7 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
         [NSEvent removeMonitor:_eventMonitor];
         _eventMonitor = nil;
     }
+    [_audioDeviceEventTimer invalidate];
     mucom88::InstallApplicationServices(nullptr);
     _services.reset();
 }

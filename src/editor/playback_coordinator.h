@@ -4,6 +4,9 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
+#include <string>
+#include <vector>
 
 #include "editor/mucom_compile_service.h"
 #include "editor/playback_session.h"
@@ -19,6 +22,12 @@ struct PlaybackCoordinatorSnapshot {
     PlaybackState state = PlaybackState::Idle;
     ServiceError error;
     std::shared_ptr<const MonitorSnapshot> monitor;
+    std::string selected_audio_device_id = "default";
+    std::string selected_audio_device_name = "System Default";
+    std::uint64_t audio_device_generation = 0;
+    bool selected_audio_device_available = true;
+    bool reconnect_available = false;
+    std::optional<AudioDeviceOpenResult> audio_device;
 };
 
 using PlaybackCoordinatorObserver =
@@ -42,6 +51,9 @@ public:
     OperationHandle TogglePauseResume();
     OperationHandle Stop();
     OperationHandle SetSpeed(int multiplier);
+    ServiceResult<std::vector<AudioDeviceDescriptor>> EnumerateAudioOutputs();
+    ServiceError SelectAudioOutput(const std::string &deviceId);
+    OperationHandle Reconnect();
     void CancelPendingPlay(DocumentId documentId);
     void DocumentClosed(DocumentId documentId);
 

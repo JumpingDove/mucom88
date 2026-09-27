@@ -723,8 +723,8 @@ diagnosticは通常1件だが、UIとservice contractは複数件を保持・選
 - [x] x2、x4、x6、x8、x10の早送り
 - [x] 再生位置、最大count、driver、状態表示
 - [x] PCM、voice、ROM、rhythm directoryの選択
-- [ ] output device列挙、選択、default変更、切断、再接続
-- [ ] requested／obtained format差の変換または明確なerror
+- [x] output device列挙、選択、default変更、切断、再接続
+- [x] requested／obtained format差の変換または明確なerror
 - [ ] 曲末尾の自動停止と次曲への遷移
 - [ ] pause／resume／stop／再初期化の反復試験
 - [ ] 内蔵speakerでPCMを含む曲を60分以上再生する
@@ -874,7 +874,7 @@ user-facingなautomatic playerを先取りしない。
 | 4-0（完了） | resource値型、Coordinator、command状態、診断値の定義 | stale play intent、複数document、drop／refill単体試験 |
 | 4-1（完了） | default PCM／voice、rhythm、外部ROMの明示path | 起動directory非依存、欠落resourceの明確なerror |
 | 4-2（完了） | compile-and-play、transport、progress、shortcut | F5／F12、Esc、Control-F1とbutton／menuの結果が一致 |
-| 4-3 | device picker、hotplug、DeviceLost、Reconnect、format表示 | 切断時に無断切替せず、選択後に曲頭から再接続 |
+| 4-3（完了） | device picker、hotplug、DeviceLost、Reconnect、format表示 | 切断時に無断切替せず、選択後に曲頭から再接続 |
 | 4-4 | 診断表示、fade-in／out、曲末hook | 反復操作でhangせず、sample不連続試験が成功 |
 | 4-5 | dummy／sanitizer回帰 | 全既存CTestとPhase 4追加試験がDebug／Release／sanitizerで成功 |
 | 4-6 | 実CoreAudio受入 | 内蔵speakerでPCM曲を60分以上再生し、既知の音切れ、click、tempo変動なし |
@@ -918,7 +918,28 @@ Control-F1はkey-upとapplication非active化でx1へ戻る。編集中に本文
 `compile_service_test`へタグ優先、default resource、未保存相対path、不足ROM／rhythm一覧を追加し、
 `playback_session_test`でPCM非埋込MUBへのdefault PCM preloadを実再生した。
 `playback_coordinator_test`では編集相当のpending intent取消を追加した。Release buildと全21 CTestは成功した。
-外部ROM実data、GUIの実CoreAudio聴感、device選択／切断／再接続は4-3以降の受入に残す。
+外部ROM実dataとGUIの実CoreAudio聴感は手動受入へ残す。device選択／切断／再接続は次の4-3で実装した。
+
+**4-3完了日: 2026-09-27**
+
+`AudioDeviceService`の出力識別子をSDL列挙index依存からdevice名基準へ変更し、`System Default`または
+選択device名を再列挙ごとに解決する。AppKit editorへoutput device popup、Reconnect button、requested／
+obtained format表示を追加した。`System Default`の選択はmacOSのsystem設定を書き換えず、次回open時に
+system defaultを解決する意味とする。選択状態はapplication実行中の全documentで共有する。
+
+AppKit main threadの0.2秒timerは`SDL_AUDIODEVICEADDED`／`SDL_AUDIODEVICEREMOVED`だけをevent queueから
+pumpする。使用中instanceの削除では`MarkDeviceLost`を通知し、別deviceへ自動切替せず`DeviceLost`に留まる。
+再列挙後に選択先が存在する場合だけReconnectを有効化し、保持中の同じ`CompiledSong`を新しい`SessionId`で
+曲頭から再生する。paused中の切断も検出できるよう、playback workerは非再生状態でも50 ms以内にdevice診断を
+確認する。
+
+audio open結果はdevice名、requested／obtainedのsample rate、bit数、channel数、buffer frame数をsnapshotへ
+保持してGUI表示する。exact formatでopenできない場合は変換を暗黙導入せず、requested formatとprobeで取得した
+available／obtained formatを含む`UnsupportedFormat`を返す。
+
+`audio_device_service_test`へSDL audio hotplug event、active instance切断、format snapshotを追加し、
+`playback_coordinator_test`では自動切替されない`DeviceLost`、明示device選択、曲頭Reconnectと新sessionを
+確認した。Release buildと全21 CTestは成功した。実物deviceの抜き差しとCoreAudio聴感は4-6へ残す。
 
 ### Phase 4で追加する常設試験
 
@@ -1046,9 +1067,8 @@ Universal BinaryとIntel Macは標準版の完了条件にしない。
 7. Phase 9～10: 署名済み配布物と最終受入
 8. 拡張profile: 実chip、外部driver。標準版後または外部仕様・hardware確保後
 
-次に実装すべき対象はPhase 4の4-3であり、output device picker、hotplug、`DeviceLost`、明示Reconnect、
-requested／obtained format表示をAppKitへ接続する。Windows golden生成、VM導入、Windows CLI比較は
-先行条件にしない。
+次に実装すべき対象はPhase 4の4-4であり、audio診断表示、fade-in／fade-out、自然終了時のsample連続性、
+Phase 5用の次曲hookを実装する。Windows golden生成、VM導入、Windows CLI比較は先行条件にしない。
 
 ## 実施履歴
 
@@ -1072,3 +1092,4 @@ requested／obtained format表示をAppKitへ接続する。Windows golden生成
 | 2026-09-25 | Phase 4計画具体化 | application単位Coordinator、stale compile抑止、transport／shortcut、resource解決、device hotplug／再接続、audio診断、click対策、Phase 5との次曲境界を確定 | 現行のPlaybackSession、AudioDeviceService、AppKit、CLI resource経路、Windows HSP操作、GUI受入仕様を照合。実装・試験は未着手 |
 | 2026-09-26 | Phase 4 4-0完了 | ResourceConfiguration、application共有PlaybackCoordinator、play intent世代、状態別command、refill／drop診断契約を実装 | `playback_coordinator_test`を追加。Release buildと全21 CTest成功。GUI接続、resource実読込、実deviceは未着手 |
 | 2026-09-27 | Phase 4 4-1／4-2完了 | default PCM／voice、rhythm、外部ROMを明示path化し、AppKitへcompile-and-play、transport、progress、速度、resource選択、F5／F12・Esc・Control-F1を接続 | タグ優先、未保存相対path、不足resource、PCM preload、pending intent取消を試験。Release buildと全21 CTest成功。device picker／hotplugは4-3へ継続 |
+| 2026-09-27 | Phase 4 4-3完了 | device名基準のoutput選択、SDL hotplug、DeviceLost、明示Reconnect、requested／obtained format表示を実装 | SDL dummyでaudio event、切断時の非自動切替、選択後の曲頭再接続、新SessionIdを確認。Release buildと全21 CTest成功。実CoreAudio抜き差しは4-6へ継続 |

@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -40,6 +41,13 @@ struct AudioDiagnostics {
     bool open = false;
     bool started = false;
     bool device_lost = false;
+    std::uint32_t device_instance_id = 0;
+};
+
+struct AudioDeviceEventSummary {
+    bool outputs_changed = false;
+    bool active_device_lost = false;
+    std::uint64_t generation = 0;
 };
 
 class AudioDeviceService {
@@ -53,6 +61,9 @@ public:
     ServiceResult<std::vector<AudioDeviceDescriptor>> EnumerateOutputs();
     ServiceResult<AudioDeviceOpenResult> Open(
         const std::string &deviceId, const AudioFormat &format = {});
+    ServiceResult<AudioDeviceEventSummary> PumpDeviceEvents();
+    std::uint64_t DeviceGeneration() const;
+    std::optional<AudioDeviceOpenResult> LastOpenResult() const;
     void Close();
     void Start();
     void Pause();

@@ -7,6 +7,7 @@
 #include <condition_variable>
 #include <cstring>
 #include <mutex>
+#include <sstream>
 #include <utility>
 
 namespace mucom88 {
@@ -15,9 +16,28 @@ namespace {
 constexpr std::size_t kRingFrames = 16384;
 constexpr int kChannels = 2;
 
-std::string DeviceId(int index, const char *name)
+std::string DeviceId(const char *name)
 {
-    return "sdl:" + std::to_string(index) + ":" + (name == nullptr ? "" : name);
+    return "sdl-name:" + std::string(name == nullptr ? "" : name);
+}
+
+std::string FormatDescription(const AudioFormat &format)
+{
+    std::ostringstream value;
+    value << format.sample_rate << " Hz, signed " << format.bits_per_sample
+          << "-bit, " << format.channels << " channels, "
+          << format.frames_per_buffer << " frames/buffer";
+    return value.str();
+}
+
+AudioFormat FromSdlSpec(const SDL_AudioSpec &spec)
+{
+    AudioFormat format;
+    format.sample_rate = spec.freq;
+    format.channels = spec.channels;
+    format.bits_per_sample = SDL_AUDIO_BITSIZE(spec.format);
+    format.frames_per_buffer = spec.samples;
+    return format;
 }
 
 } // namespace
@@ -66,7 +86,8 @@ public:
     SDL_AudioDeviceID device = 0;
     AudioFormat format;
     AudioDeviceDescriptor descriptor;
-    std::uint64_t generation = 0;
+    std::optional<AudioDeviceOpenResult> lastOpen;
+    std::uint64_t generation = 1;
     std::uint64_t underruns = 0;
     std::uint64_t droppedFrames = 0;
     std::uint64_t renderedFrames = 0;
@@ -89,7 +110,7 @@ AudioDeviceService::~AudioDeviceService()
         initialized = impl_->initialized;
         impl_->initialized = false;
     }
-    if (initialized) SDL_QuitSubSystem(SDL_INIT_AUDIO);
+    if (initialized) SDL_QuitSubSystem(SDL_INIT_AUDIO | SDL_INIT_EVENTS);
 }
 
 ServiceResult<std::vector<AudioDeviceDescriptor>>
@@ -99,21 +120,20 @@ AudioDeviceService::EnumerateOutputs()
     {
         std::lock_guard<std::mutex> lock(impl_->mutex);
         if (!impl_->initialized) {
-            if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) {
+            if (SDL_InitSubSystem(SDL_INIT_AUDIO | SDL_INIT_EVENTS) != 0) {
                 result.error = {ServiceErrorCode::DeviceUnavailable,
                     SDL_GetError(), {}, true};
                 return result;
             }
             impl_->initialized = true;
         }
-        ++impl_->generation;
         result.value.push_back({"default", "System Default",
             true, impl_->generation});
         const int count = SDL_GetNumAudioDevices(0);
         for (int index = 0; index < count; ++index) {
             const char *name = SDL_GetAudioDeviceName(index, 0);
             if (name == nullptr) continue;
-            result.value.push_back({DeviceId(index, name), name,
+            result.value.push_back({DeviceId(name), name,
                 false, impl_->generation});
         }
     }
@@ -128,7 +148,10 @@ ServiceResult<AudioDeviceOpenResult> AudioDeviceService::Open(
     if (format.sample_rate <= 0 || format.channels != 2 ||
         format.bits_per_sample != 16 || format.frames_per_buffer <= 0) {
         result.error = {ServiceErrorCode::UnsupportedFormat,
-            "Phase 2 audio output requires signed 16-bit stereo PCM.", {}, true};
+            "Unsupported requested audio format: " +
+                FormatDescription(format) +
+                "; required: 44100 Hz, signed 16-bit, 2 channels.",
+            {}, true};
         return result;
     }
     const auto devices = EnumerateOutputs();
@@ -155,15 +178,31 @@ ServiceResult<AudioDeviceOpenResult> AudioDeviceService::Open(
     const SDL_AudioDeviceID opened =
         SDL_OpenAudioDevice(name, 0, &desired, &obtained, 0);
     if (opened == 0) {
-        result.error = {ServiceErrorCode::DeviceUnavailable,
-            SDL_GetError(), selected->name, true};
+        const std::string exactError = SDL_GetError();
+        SDL_AudioSpec available{};
+        const SDL_AudioDeviceID probe = SDL_OpenAudioDevice(name, 0,
+            &desired, &available, SDL_AUDIO_ALLOW_ANY_CHANGE);
+        std::string availableText = "available format could not be queried";
+        const bool formatWasProbed = probe != 0;
+        if (probe != 0) {
+            availableText = FormatDescription(FromSdlSpec(available));
+            SDL_CloseAudioDevice(probe);
+        }
+        result.error = {formatWasProbed ? ServiceErrorCode::UnsupportedFormat
+                                        : ServiceErrorCode::DeviceUnavailable,
+            "Unable to open '" + selected->name + "' with requested format " +
+                FormatDescription(format) + "; available: " + availableText +
+                "; SDL: " + exactError,
+            selected->name, true};
         return result;
     }
     if (obtained.freq != desired.freq || obtained.format != desired.format ||
         obtained.channels != desired.channels) {
         SDL_CloseAudioDevice(opened);
         result.error = {ServiceErrorCode::UnsupportedFormat,
-            "The selected device did not provide 44.1 kHz signed 16-bit stereo PCM.",
+            "Audio format mismatch for '" + selected->name + "': requested " +
+                FormatDescription(format) + "; obtained " +
+                FormatDescription(FromSdlSpec(obtained)) + ".",
             selected->name, true};
         return result;
     }
@@ -172,11 +211,7 @@ ServiceResult<AudioDeviceOpenResult> AudioDeviceService::Open(
         std::lock_guard<std::mutex> lock(impl_->mutex);
         impl_->device = opened;
         impl_->descriptor = *selected;
-        impl_->format = format;
-        impl_->format.sample_rate = obtained.freq;
-        impl_->format.channels = obtained.channels;
-        impl_->format.bits_per_sample = SDL_AUDIO_BITSIZE(obtained.format);
-        impl_->format.frames_per_buffer = obtained.samples;
+        impl_->format = FromSdlSpec(obtained);
         impl_->readPosition = 0;
         impl_->writePosition = 0;
         impl_->queuedSamples = 0;
@@ -189,8 +224,68 @@ ServiceResult<AudioDeviceOpenResult> AudioDeviceService::Open(
         impl_->deviceLost = false;
         impl_->refillPending = false;
         result.value = {*selected, format, impl_->format};
+        impl_->lastOpen = result.value;
     }
     return result;
+}
+
+ServiceResult<AudioDeviceEventSummary> AudioDeviceService::PumpDeviceEvents()
+{
+    ServiceResult<AudioDeviceEventSummary> result;
+    {
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        if (!impl_->initialized) {
+            if (SDL_InitSubSystem(SDL_INIT_AUDIO | SDL_INIT_EVENTS) != 0) {
+                result.error = {ServiceErrorCode::DeviceUnavailable,
+                    SDL_GetError(), {}, true};
+                return result;
+            }
+            impl_->initialized = true;
+        }
+    }
+
+    SDL_Event event{};
+    bool activeLost = false;
+    SDL_PumpEvents();
+    while (true) {
+        const int count = SDL_PeepEvents(&event, 1, SDL_GETEVENT,
+            SDL_AUDIODEVICEADDED, SDL_AUDIODEVICEREMOVED);
+        if (count < 0) {
+            result.error = {ServiceErrorCode::RuntimeError,
+                SDL_GetError(), {}, true};
+            return result;
+        }
+        if (count == 0) break;
+        if (event.adevice.iscapture != 0) continue;
+        result.value.outputs_changed = true;
+        if (event.type == SDL_AUDIODEVICEREMOVED) {
+            std::lock_guard<std::mutex> lock(impl_->mutex);
+            if (impl_->device != 0 && event.adevice.which == impl_->device)
+                activeLost = true;
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        if (result.value.outputs_changed) ++impl_->generation;
+        result.value.generation = impl_->generation;
+    }
+    if (activeLost) {
+        MarkDeviceLost();
+        result.value.active_device_lost = true;
+    }
+    return result;
+}
+
+std::uint64_t AudioDeviceService::DeviceGeneration() const
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->generation;
+}
+
+std::optional<AudioDeviceOpenResult> AudioDeviceService::LastOpenResult() const
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    return impl_->lastOpen;
 }
 
 void AudioDeviceService::Close()
@@ -315,6 +410,7 @@ AudioDiagnostics AudioDeviceService::Diagnostics() const
     diagnostics.open = impl_->device != 0;
     diagnostics.started = impl_->started;
     diagnostics.device_lost = impl_->deviceLost;
+    diagnostics.device_instance_id = impl_->device;
     return diagnostics;
 }
 

@@ -95,6 +95,22 @@ int main()
     CHECK(test, firstObserverCalls.load() == firstBeforePause);
     CHECK(test, secondObserverCalls.load() > 0);
 
+    const auto disconnectedSession = coordinator.Snapshot().monitor->session_id;
+    playback->AudioService()->MarkDeviceLost();
+    CHECK(test, WaitForState(coordinator, mucom88::PlaybackState::DeviceLost,
+        std::chrono::seconds(2)));
+    CHECK(test, coordinator.Snapshot().reconnect_available);
+    const auto invalidDevice = coordinator.SelectAudioOutput("missing-device");
+    CHECK(test, invalidDevice.code == mucom88::ServiceErrorCode::NotFound);
+    CHECK(test, !coordinator.SelectAudioOutput("default"));
+    const auto reconnect = coordinator.Reconnect();
+    CHECK(test, reconnect.IsValid());
+    CHECK(test, WaitForState(coordinator, mucom88::PlaybackState::Playing,
+        std::chrono::seconds(5)));
+    CHECK(test, coordinator.Snapshot().monitor->session_id != disconnectedSession);
+    CHECK(test, coordinator.Snapshot().selected_audio_device_id == "default");
+    CHECK(test, coordinator.Snapshot().audio_device.has_value());
+
     coordinator.DocumentClosed(200);
     CHECK(test, WaitForState(coordinator, mucom88::PlaybackState::Idle,
         std::chrono::seconds(2)));

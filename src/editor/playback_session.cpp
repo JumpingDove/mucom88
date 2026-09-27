@@ -87,6 +87,7 @@ public:
             next->driver = song ? song->driver : DriverMode::Unknown;
             next->speed = speed;
             next->audio = audio->Diagnostics();
+            next->audio_device = audio->LastOpenResult();
             latest = next;
             event.operation_id = operationId;
             event.document_id = song ? song->document_id : 0;
@@ -159,6 +160,7 @@ public:
             target.quantize = data.quantize;
         }
         snapshot->audio = audio->Diagnostics();
+        snapshot->audio_device = audio->LastOpenResult();
         std::lock_guard<std::mutex> lock(stateMutex);
         latest = std::move(snapshot);
     }
@@ -296,9 +298,8 @@ public:
                 if (commands.empty() && state != PlaybackState::Buffering &&
                     state != PlaybackState::Playing &&
                     state != PlaybackState::Draining) {
-                    commandCondition.wait(lock, [this] {
-                        return shuttingDown || !commands.empty();
-                    });
+                    commandCondition.wait_for(lock, std::chrono::milliseconds(50),
+                        [this] { return shuttingDown || !commands.empty(); });
                 } else if (commands.empty()) {
                     commandCondition.wait_for(lock, std::chrono::milliseconds(2));
                 }

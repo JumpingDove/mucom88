@@ -19,16 +19,25 @@ int main()
     CHECK(test, !first.value.empty());
     CHECK(test, first.value.front().id == "default");
     CHECK(test, first.value.front().is_default);
-    CHECK(test, second.value.front().generation > first.value.front().generation);
+    CHECK(test, second.value.front().generation == first.value.front().generation);
+    for (std::size_t index = 1; index < first.value.size(); ++index) {
+        CHECK(test, first.value[index].id ==
+            "sdl-name:" + first.value[index].name);
+    }
 
     mucom88::AudioFormat invalid;
     invalid.channels = 1;
     const auto rejected = audio.Open("default", invalid);
     CHECK(test, !rejected.Succeeded());
     CHECK(test, rejected.error.code == mucom88::ServiceErrorCode::UnsupportedFormat);
+    CHECK(test, rejected.error.message.find("1 channels") != std::string::npos);
 
     const auto opened = audio.Open("default");
     CHECK(test, opened.Succeeded());
+    CHECK(test, opened.value.requested.sample_rate == 44100);
+    CHECK(test, opened.value.obtained.sample_rate == 44100);
+    CHECK(test, opened.value.obtained.channels == 2);
+    CHECK(test, audio.LastOpenResult().has_value());
     CHECK(test, audio.Diagnostics().open);
     std::array<int, 256 * 2> samples{};
     CHECK(test, audio.WriteFrames(samples.data(), 256) == 256);
@@ -44,7 +53,25 @@ int main()
     CHECK(test, audio.WriteFrames(samples.data(), 1) == 1);
     CHECK(test, audio.Diagnostics().refill_events == 1);
 
-    audio.MarkDeviceLost();
+    SDL_Event added{};
+    added.type = SDL_AUDIODEVICEADDED;
+    added.adevice.which = 0;
+    added.adevice.iscapture = 0;
+    CHECK(test, SDL_PushEvent(&added) == 1);
+    const auto addedEvents = audio.PumpDeviceEvents();
+    CHECK(test, addedEvents.Succeeded());
+    CHECK(test, addedEvents.value.outputs_changed);
+
+    SDL_Event removed{};
+    removed.type = SDL_AUDIODEVICEREMOVED;
+    removed.adevice.which = audio.Diagnostics().device_instance_id;
+    removed.adevice.iscapture = 0;
+    CHECK(test, removed.adevice.which != 0);
+    CHECK(test, SDL_PushEvent(&removed) == 1);
+    const auto removedEvents = audio.PumpDeviceEvents();
+    CHECK(test, removedEvents.Succeeded());
+    CHECK(test, removedEvents.value.outputs_changed);
+    CHECK(test, removedEvents.value.active_device_lost);
     CHECK(test, audio.Diagnostics().device_lost);
     CHECK(test, audio.WriteFrames(samples.data(), 1) == 0);
     audio.Close();

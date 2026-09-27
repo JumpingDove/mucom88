@@ -4,6 +4,7 @@
 #include <array>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "editor/audio_device_service.h"
@@ -51,6 +52,7 @@ struct MonitorSnapshot {
     int speed = 1;
     std::array<ChannelSnapshot, 11> channels{};
     AudioDiagnostics audio;
+    std::optional<AudioDeviceOpenResult> audio_device;
 };
 
 struct PlaybackOptions {

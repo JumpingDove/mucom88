@@ -1547,3 +1547,51 @@ pending play intent取消を確認する。Release構成で`MUCOM88Editor.app`�
 4-3のdevice picker／hotplug／Reconnect、4-4のfadeと診断表示、4-5の全sanitizer構成、4-6の実CoreAudio
 60分受入は未実施である。外部ROMは再配布可能な実dataがrepositoryにないため、4-1ではpath検証とerror伝播までを
 自動試験し、実ROMでの再生は手動受入項目として残す。
+
+## 22. Phase 4 output deviceとReconnect（4-3）
+
+2026-09-27にPhase 4の4-3を実装した。editorのAudio Output popupで`System Default`またはSDL2が列挙した
+出力deviceを選択できる。選択はapplication内で共有し、Compile & Play時に現在のdevice名を再列挙結果へ
+解決してopenする。SDLの一時的な列挙indexは保存せず、device名をselection IDにする。同名deviceが実機で
+識別問題になる場合だけ、将来CoreAudio UID backendを追加する。
+
+`System Default`はmacOS全体のdefault出力を変更する操作ではない。app側の選択をdefaultへ戻し、次回open時の
+system defaultを使用する。4-1のresource選択と同様、Phase 8のSettingsServiceが実装されるまでは再起動後に
+選択を保持しない。
+
+### 22.1 hotplugと再接続
+
+AppKit main threadの0.2秒timerがSDL event queueからaudio-device eventだけを取得する。出力一覧が変わると
+各documentのpopupを更新する。使用中の`SDL_AudioDeviceID`と一致する`SDL_AUDIODEVICEREMOVED`を受けた場合は
+次の状態遷移を行う。
+
+```text
+Playing／Buffering／Paused
+  -> MarkDeviceLost
+  -> DeviceLost（自動切替しない）
+  -> 利用可能な出力を明示選択
+  -> Reconnect
+  -> 同じCompiledSongを新SessionIdで曲頭から再生
+```
+
+選択済みdeviceが一覧から消えた場合はpopupへ`Unavailable:`として残し、Reconnectを無効にする。別deviceまたは
+`System Default`を選択するとReconnectが有効になる。安全なseek契約がないため切断位置からの再開は行わない。
+Stopは従来どおり再生内容を破棄するため、その後のReconnectはできない。
+
+### 22.2 audio format表示
+
+初期実装は44.1 kHz、signed 16-bit、stereo、1024 frames/bufferのexact openを要求する。成功時はdevice名と
+requested／obtainedのsample rate、bit数、channel数、buffer frame数をeditorへ表示する。exact openに失敗した
+場合はSDLへallow-any-changeで一度probeし、requestedとavailable formatを含むerrorを表示して閉じる。自動sample
+rate変換やchannel変換は追加していない。実機で必要性が確認された場合に限り、`SDL_AudioStream`導入を別途判断する。
+
+### 22.3 検証
+
+build手順は13章と同じである。Release構成で`MUCOM88Editor.app`を含むbuildと全21件のCTestに成功した。
+`audio_device_service_test`はSDL dummy device上で追加／削除event、active instanceの切断、generation更新、
+requested／obtained snapshotを確認する。`playback_coordinator_test`は切断後に`DeviceLost`で停止して自動切替
+しないこと、明示Reconnect後に異なる`SessionId`でPlayingへ戻ることを確認する。
+
+この自動試験はSDL eventと状態機械を検証するもので、実CoreAudio deviceの物理的な抜き差し、同名device、
+内蔵speakerでの聴感を完了させるものではない。これらは4-6の手動受入に残す。次の実装対象は4-4のaudio診断表示、
+fade-in／fade-out、自然終了時のsample連続性、次曲hookである。
