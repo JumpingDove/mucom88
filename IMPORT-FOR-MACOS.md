@@ -1663,3 +1663,55 @@ Apple Silicon、Release構成で`MUCOM88Editor.app`を含むbuildと全23件のC
 状態機械、hangしない反復操作の自動検証であり、実CoreAudio出力の聴感を保証しない。次は4-5でDebug、
 ASan／UBSan、TSanを含む全構成の回帰を行い、その後4-6で内蔵speakerの60分再生、click、音切れ、tempo、
 PCM、物理device切断を手動受入する。
+
+## 24. Phase 4 dummy／sanitizer回帰（4-5）
+
+2026-09-27にPhase 4の4-5を実施した。4-4までの全23 CTestをRelease、Debug、ASan／UBSan、TSanで再実行し、
+全構成で成功した。各buildはCLIだけでなく`MUCOM88Editor.app`も生成し、ad-hoc署名まで完了している。
+
+### 24.1 実行手順
+
+Releaseは13章の標準手順を使用する。追加3構成は次のとおりである。
+
+```sh
+cmake -S src -B build-debug \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DBUILD_TESTING=ON
+cmake --build build-debug --parallel
+ctest --test-dir build-debug --output-on-failure
+
+cmake -S src -B build-asan \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DBUILD_TESTING=ON \
+  -DMUCOM88_ENABLE_ASAN_UBSAN=ON
+cmake --build build-asan --parallel
+ctest --test-dir build-asan --output-on-failure
+
+cmake -S src -B build-tsan \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DBUILD_TESTING=ON \
+  -DMUCOM88_ENABLE_TSAN=ON
+cmake --build build-tsan --parallel
+ctest --test-dir build-tsan --output-on-failure
+```
+
+`MUCOM88_ENABLE_ASAN_UBSAN`と`MUCOM88_ENABLE_TSAN`は排他的であり、同じbuild directoryへ同時指定しない。
+手順で使用する`build-asan/`と`build-tsan/`は`.gitignore`対象へ追加した。
+
+### 24.2 結果
+
+| 構成 | CTest | 結果 |
+|---|---:|---|
+| Release | 23/23 | 成功 |
+| Debug | 23/23 | 成功 |
+| ASan／UBSan | 23/23 | 成功、AddressSanitizer／UndefinedBehaviorSanitizer報告なし |
+| TSan | 23/23 | 成功、ThreadSanitizerのdata race報告なし |
+
+SDL dummyを使用する`playback_transport_stress_test`は全構成でPlay／Pause／Resume／Stop、fade完了待機、
+audio deviceのopen／closeを100回完走した。`audio_fade_test`、有限曲のbuffer排出、次曲hook、device lost、
+application／callback lifetimeを含め、timeoutやhangは発生していない。4-5では試験で不具合を検出しなかったため、
+runtime／editor sourceの追加修正は行っていない。
+
+この結果はSDL dummyとoffline処理の自動回帰であり、実際のspeaker出力やCoreAudio hotplugを代替しない。
+次の4-6ではこのApple Silicon Macの内蔵speakerでPCM曲を60分以上再生し、GUI診断値、click、音切れ、tempo、
+終了noise、物理device切断／再接続を記録する。

@@ -876,7 +876,7 @@ user-facingなautomatic playerを先取りしない。
 | 4-2（完了） | compile-and-play、transport、progress、shortcut | F5／F12、Esc、Control-F1とbutton／menuの結果が一致 |
 | 4-3（完了） | device picker、hotplug、DeviceLost、Reconnect、format表示 | 切断時に無断切替せず、選択後に曲頭から再接続 |
 | 4-4（完了） | 診断表示、fade-in／out、曲末hook | 反復操作でhangせず、sample不連続試験が成功 |
-| 4-5 | dummy／sanitizer回帰 | 全既存CTestとPhase 4追加試験がDebug／Release／sanitizerで成功 |
+| 4-5（完了） | dummy／sanitizer回帰 | 全既存CTestとPhase 4追加試験がDebug／Release／sanitizerで成功 |
 | 4-6 | 実CoreAudio受入 | 内蔵speakerでPCM曲を60分以上再生し、既知の音切れ、click、tempo変動なし |
 
 **4-0完了日: 2026-09-26**
@@ -962,6 +962,26 @@ playlist UIはPhase 5へ残す。
 `playback_transport_stress_test`はSDL dummy上でPlay／Pause／Resume／Stopとdevice open／closeを100回反復する。
 `playback_coordinator_test`では有限曲からloop曲への自動遷移とdocument／session切替を確認した。Release buildと
 全23 CTestは成功した。Debugおよびsanitizer全構成は4-5、実CoreAudio聴感は4-6へ残す。
+
+**4-5完了日: 2026-09-27**
+
+Phase 4の追加試験を含む全23 CTestをRelease、Debug、ASan／UBSan、TSanの4構成で実行し、すべて成功した。
+各構成で`MUCOM88Editor.app`、CLI、test executableのcompile／linkとad-hoc署名も成功した。
+
+| 構成 | CMake option | CTest結果 |
+|---|---|---|
+| Release | `-DCMAKE_BUILD_TYPE=Release` | 23/23成功 |
+| Debug | `-DCMAKE_BUILD_TYPE=Debug` | 23/23成功 |
+| ASan／UBSan | Debug + `-DMUCOM88_ENABLE_ASAN_UBSAN=ON` | 23/23成功、sanitizer報告なし |
+| TSan | Debug + `-DMUCOM88_ENABLE_TSAN=ON` | 23/23成功、data race報告なし |
+
+SDL dummy上の`playback_transport_stress_test`は各構成でPlay／Pause／Resume／Stopとdevice open／closeを
+100回完走した。4-4で追加したfade callback、fade完了待機、次曲hook、snapshot更新について、memory error、
+undefined behavior、thread race、timeout、hangは検出されなかった。build directoryを手順どおりsource tree直下へ
+作成しても差分扱いにならないよう、`build-asan/`と`build-tsan/`を`.gitignore`へ追加した。
+
+4-5はdummy／sanitizer回帰の完了であり、実CoreAudio deviceや聴感を検証したものではない。内蔵speakerでの
+60分PCM再生、click／音切れ／tempo、物理device切断は4-6の完了条件として残す。
 
 ### Phase 4で追加する常設試験
 
@@ -1089,8 +1109,9 @@ Universal BinaryとIntel Macは標準版の完了条件にしない。
 7. Phase 9～10: 署名済み配布物と最終受入
 8. 拡張profile: 実chip、外部driver。標準版後または外部仕様・hardware確保後
 
-次に実装すべき対象はPhase 4の4-5であり、Debug、Release、ASan／UBSan、TSanでPhase 4追加試験を含む
-全CTestを実行し、dummy audio回帰を固定する。Windows golden生成、VM導入、Windows CLI比較は先行条件にしない。
+次に実施すべき対象はPhase 4の4-6であり、このApple Silicon Macの実CoreAudio deviceを使ってPCM曲を
+60分以上再生し、診断値、click、音切れ、tempo、終了noise、物理device切断／再接続を受け入れる。
+Windows golden生成、VM導入、Windows CLI比較は先行条件にしない。
 
 ## 実施履歴
 
@@ -1116,3 +1137,4 @@ Universal BinaryとIntel Macは標準版の完了条件にしない。
 | 2026-09-27 | Phase 4 4-1／4-2完了 | default PCM／voice、rhythm、外部ROMを明示path化し、AppKitへcompile-and-play、transport、progress、速度、resource選択、F5／F12・Esc・Control-F1を接続 | タグ優先、未保存相対path、不足resource、PCM preload、pending intent取消を試験。Release buildと全21 CTest成功。device picker／hotplugは4-3へ継続 |
 | 2026-09-27 | Phase 4 4-3完了 | device名基準のoutput選択、SDL hotplug、DeviceLost、明示Reconnect、requested／obtained format表示を実装 | SDL dummyでaudio event、切断時の非自動切替、選択後の曲頭再接続、新SessionIdを確認。Release buildと全21 CTest成功。実CoreAudio抜き差しは4-6へ継続 |
 | 2026-09-27 | Phase 4 4-4完了 | audio診断表示、256 frame fade-in／out、自然終了fade、Phase 5向け次曲hookを実装 | 100回のtransport／device再初期化、sample連続性、2曲遷移を追加試験。Release buildと全23 CTest成功。sanitizerは4-5、実CoreAudio聴感は4-6へ継続 |
+| 2026-09-27 | Phase 4 4-5完了 | Phase 4追加分を含むdummy audio／sanitizer回帰を実施し、sanitizer build directoryをignore対象化 | Release、Debug、ASan／UBSan、TSanの各構成で全23 CTest成功。memory／UB／data race／hang報告なし。実CoreAudio受入は4-6へ継続 |

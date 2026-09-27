@@ -26,4 +26,6 @@ src/Debug
 
 build/
 build-debug/
+build-asan/
+build-tsan/
 **/*.mub
