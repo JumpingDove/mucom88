@@ -266,7 +266,7 @@ void mucomvm::ResetFM(void)
 	}
 }
 
-bool mucomvm::InitSoundSystem(int rate)
+bool mucomvm::InitSoundSystem(int rate, const char *rhythmDirectory)
 {
 	// レート設定
 	Rate = rate;
@@ -309,7 +309,7 @@ bool mucomvm::InitSoundSystem(int rate)
 
 	opn = new FM::OPNA;
 	if (opn) {
-		opn->Init(baseclock, 8000, 0);
+		opn->Init(baseclock, 8000, 0, rhythmDirectory);
 #if 0
 		// PSG TEST
 		opn->SetReg(0x07, 8 + 16 + 32);

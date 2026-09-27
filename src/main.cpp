@@ -359,17 +359,23 @@ int main(int argc, char *argv[])
 
     CMucom mucom;
     {
-        ScopedWorkingDirectory rhythmDirectory(options.rhythmDirectory);
-        if (!rhythmDirectory.IsValid(options.rhythmDirectory)) {
-            std::fprintf(stderr, "mucom88: cannot enter rhythm directory: %s\n",
+        std::error_code rhythmError;
+        if (!options.rhythmDirectory.empty() &&
+            !std::filesystem::is_directory(options.rhythmDirectory,
+                rhythmError)) {
+            std::fprintf(stderr, "mucom88: rhythm directory not found: %s\n",
                 options.rhythmDirectory.c_str());
             return 1;
         }
-        if (!mucom.Init(nullptr, vmOptions, RENDER_RATE)) {
+        if (!mucom.Init(nullptr, vmOptions, RENDER_RATE,
+                options.rhythmDirectory.empty()
+                    ? nullptr : options.rhythmDirectory.c_str())) {
             std::fprintf(stderr, "mucom88: initialization failed\n");
             return 1;
         }
     }
+    mucom.SetResourceDirectory(inputDirectory.string().c_str());
+    mucom.SetExternalRomDirectory(inputDirectory.string().c_str());
 
 #ifdef MUCOM88WIN
     if (!options.pluginFile.empty() &&
@@ -398,6 +404,12 @@ int main(int argc, char *argv[])
     }
     mucom.SetDriverMode(driverMode);
     mucom.Reset(compileOptions);
+    if (options.externalRom && !mucom.ExternalRomLoadSucceeded()) {
+        std::fprintf(stderr,
+            "mucom88: failed to load external MUCOM driver files from: %s\n",
+            inputDirectory.string().c_str());
+        return 1;
+    }
 
     if (options.info) {
         if (mucom.ProcessFile(options.input.c_str()) != 0) {

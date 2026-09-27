@@ -162,6 +162,22 @@ OperationHandle PlaybackCoordinator::SetSpeed(int multiplier)
     return impl_->playback->SetSpeed(multiplier);
 }
 
+void PlaybackCoordinator::CancelPendingPlay(DocumentId documentId)
+{
+    OperationHandle compile;
+    {
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        if (documentId == 0 || impl_->pendingDocument != documentId) return;
+        ++impl_->generation;
+        impl_->snapshot.play_intent_generation = impl_->generation;
+        impl_->pendingDocument = 0;
+        impl_->snapshot.document_id = 0;
+        impl_->snapshot.revision = 0;
+        compile = impl_->compileOperation;
+    }
+    compile.Cancel();
+}
+
 void PlaybackCoordinator::DocumentClosed(DocumentId documentId)
 {
     bool shouldStop = false;

@@ -213,8 +213,10 @@ public:
             return;
         }
         runtime = std::make_unique<CMucom>();
+        const char *rhythmDirectory = song->resources.rhythm_directory.empty()
+            ? nullptr : song->resources.rhythm_directory.c_str();
         if (!runtime->Init(nullptr, MUCOM_OPTION_STEP,
-                options.audio_format.sample_rate)) {
+                options.audio_format.sample_rate, rhythmDirectory)) {
             StopRuntime();
             Publish(operationId, PlaybackState::Failed,
                 {ServiceErrorCode::RuntimeError,
@@ -225,6 +227,17 @@ public:
         runtime->SetResourceDirectory(song->resource_directory.c_str());
         runtime->SetDriverMode(static_cast<int>(song->driver));
         runtime->Reset(MUCOM_RESET_PLAYER);
+        if (!song->has_embedded_pcm &&
+            !song->resources.default_pcm_file.empty() &&
+            runtime->LoadPCM(song->resources.default_pcm_file.c_str()) != 0) {
+            const std::string path = song->resources.default_pcm_file;
+            StopRuntime();
+            Publish(operationId, PlaybackState::Failed,
+                {ServiceErrorCode::InvalidData,
+                    "Unable to load the default PCM file: " + path,
+                    path, true});
+            return;
+        }
         if (runtime->LoadMusicData(song->mub_bytes.data(),
                 static_cast<int>(song->mub_bytes.size())) != 0 ||
             runtime->Play(0) != 0) {

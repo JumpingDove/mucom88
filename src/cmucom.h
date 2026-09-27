@@ -364,7 +364,8 @@ public:
 	~CMucom();
 
 	//	MUCOM88 main service
-	bool Init(void *window = NULL, int option = 0, int Rate = 0);
+	bool Init(void *window = NULL, int option = 0, int Rate = 0,
+		const char *rhythmDirectory = NULL);
 	void Reset(int option=0);
 	void LoadOriginal(int option);
 	void LoadPlayer(int option);
@@ -404,6 +405,8 @@ public:
 	int LoadTagFromMusic(int num);
 	void AddExtraInfo(char *mmlsource);
 	void SetResourceDirectory(const char *directory);
+	void SetExternalRomDirectory(const char *directory);
+	bool ExternalRomLoadSucceeded() const { return external_rom_load_succeeded; }
 	void SetFMVoiceReadOnly(bool readOnly) { fmvoice_read_only = readOnly; }
 
 	//	VM log service
@@ -562,6 +565,8 @@ private:
 	std::string tempfilename;	// temp VOICE file
 	std::string voice_pathname;	// voice pathname
 	std::string resource_directory; // base directory for relative MML resources
+	std::string external_rom_directory; // base directory for external ROM files
+	bool external_rom_load_succeeded;
 	MUCOM88_VOICEFORMAT fmvoice_internal[MUCOM_FMVOICE_MAXNO];
 	MUCOM88_VOICEFORMAT *fmvoice_original;
 	unsigned char fmvoice_use[MUCOM_FMVOICE_MAX];	// use FM voice no. table
@@ -624,6 +629,8 @@ private:
 	void MusicBufferInit(void);
 	void MusicBufferTerm(void);
 	std::string ResolveResourcePath(const char *filename) const;
+	std::string ResolveExternalRomPath(const char *filename) const;
+	int LoadExternalRom(const char *filename, int address);
 	CMemBuf *musbuf[MUCOM_MUSICBUFFER_MAX];
 
 	//		Audio

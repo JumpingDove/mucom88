@@ -1484,3 +1484,66 @@ Stop後の遅延compile無効化を確認する。`compile_service_test`はresou
 `audio_device_service_test`はrender／drop／refill、`editor_command_test`はplayback state別commandを確認する。
 
 Debug、ASan／UBSan、TSanは4-5で実施する。実CoreAudio device、長時間再生、聴感確認は4-6まで未完了である。
+
+## 21. Phase 4 resource読込と再生GUI（4-1／4-2）
+
+2026-09-27にPhase 4の4-1と4-2を実装した。MML editorから編集中snapshotを非同期compileして直ちに
+再生でき、transport、簡易progress、速度変更、resource選択をapplication共有の再生sessionへ接続した。
+output device picker、hotplug、Reconnectは4-3以降であり、この章の完了範囲には含めない。
+
+### 21.1 resource解決
+
+Playback menuのResources submenuから、Default PCM、Default Voice、Rhythm Directory、External ROM
+Directoryを選択できる。Use External ROMを有効にした場合だけ外部ROMを使用する。選択値はapplication実行中の
+全documentで共有し、再起動後には保持しない。
+
+PCM／voiceはMML内の`#pcm`／`#voice`を最優先し、タグがない場合だけ選択済みdefaultを使用する。相対pathは
+MML documentのdirectoryを基準に解決する。未保存documentに相対pathがある場合はprocess current directoryへ
+fallbackせず、保存を要求するerrorにする。default voiceはcompile前に読み込み、default PCMは生成MUBにPCMが
+埋め込まれていない場合だけ再生／export runtimeへpreloadする。
+
+rhythm directoryは`CMucom::Init`、`mucomvm::InitSoundSystem`、FMGENの順に明示的に渡し、6個の
+`2608_*.WAV`をdirectoryとfile名のpath結合で読む。CLIの`-r`も一時的なrhythm directoryへの`chdir`を廃止し、
+同じAPIを使用する。外部ROM modeでは`expand`、`errmsg`、`msub`、`muc88`、`ssgdat`、`time`、`smon`、
+`music`を選択directory内で事前検査し、不足file名をerrorへ列挙する。
+
+### 21.2 再生操作
+
+editor上部の操作は次のとおりである。
+
+| 操作 | button／menu | shortcut |
+|---|---|---|
+| compileのみ | Compile／Build > Compile | Command-R |
+| compile後に再生 | Compile & Play／Build > Compile & Play | F5またはF12 |
+| pause／resume | Pause／Resume／Playback > Pause / Resume | Esc |
+| 完全停止 | Stop／Playback > Stop | なし |
+| 早送り切替 | Fast／Playback > Fast Forward | なし |
+| 押下中だけ早送り | 選択済みx2、x4、x6、x8、x10 | Control-F1 |
+
+Control-F1はkey-upまたはapplicationが非activeになった時にx1へ戻る。function keyをmacOS側が予約している
+環境でもbuttonとmenuから同じactionを実行できる。本文編集でrevisionが変化した場合、処理中の
+compile-and-play intentは無効化され、古いsnapshotが後から再生を開始しない。別documentから再生すると
+application内の旧sessionを停止し、active documentを閉じると再生も停止する。
+
+status／progress行はmain threadの15 Hz timerでimmutable snapshotを読み、playback state、driver、
+current／max count、loop回数、現在速度を表示する。有限曲はdeterminate progress、準備中または最大countが
+ない場合はindeterminate表示にする。11 channel詳細monitorとaudio診断値のGUI表示はPhase 5および4-4へ残す。
+
+### 21.3 buildと検証
+
+build手順は13章と同じである。
+
+```sh
+cmake -S src -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
+
+`compile_service_test`でタグ優先、default PCM／voice、未保存documentの相対path拒否、外部ROMとrhythmの
+不足file errorを確認した。`playback_session_test`では`#pcm`を除いたMMLをdefault PCM付きでcompileし、
+PCM非埋込MUBをSDL dummy deviceで再生できることを確認した。`playback_coordinator_test`はdocument編集相当の
+pending play intent取消を確認する。Release構成で`MUCOM88Editor.app`を含むbuildと全21件のCTestに成功した。
+
+4-3のdevice picker／hotplug／Reconnect、4-4のfadeと診断表示、4-5の全sanitizer構成、4-6の実CoreAudio
+60分受入は未実施である。外部ROMは再配布可能な実dataがrepositoryにないため、4-1ではpath検証とerror伝播までを
+自動試験し、実ROMでの再生は手動受入項目として残す。

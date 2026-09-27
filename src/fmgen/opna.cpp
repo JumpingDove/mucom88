@@ -9,6 +9,8 @@
 #include "opna.h"
 #include "fmgeninl.h"
 
+#include <string>
+
 #define BUILD_OPN
 #define BUILD_OPNA
 #define BUILD_OPNB
@@ -1274,21 +1276,17 @@ bool OPNA::LoadRhythmSample(const char* path)
 	{
 		FileIO file;
 		uint32 fsize;
-		char buf[_MAXPATH] = "";
-		if (path)
-			strncpy(buf, path, _MAXPATH);
-		strncat(buf, "2608_", _MAXPATH);
-		strncat(buf, rhythmname[i], _MAXPATH);
-		strncat(buf, ".WAV", _MAXPATH);
+		std::string directory = path == NULL ? "" : path;
+		if (!directory.empty() && directory.back() != '/' &&
+			directory.back() != '\\') directory += '/';
+		std::string filename = directory + "2608_" + rhythmname[i] + ".WAV";
 
-		if (!file.Open(buf, FileIO::readonly))
+		if (!file.Open(filename.c_str(), FileIO::readonly))
 		{
 			if (i != 5)
 				break;
-			if (path)
-				strncpy(buf, path, _MAXPATH);
-			strncpy(buf, "2608_RYM.WAV", _MAXPATH);
-			if (!file.Open(buf, FileIO::readonly))
+			filename = directory + "2608_RYM.WAV";
+			if (!file.Open(filename.c_str(), FileIO::readonly))
 				break;
 		}
 		

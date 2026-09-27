@@ -4,6 +4,8 @@
 #include "editor/serial_executor.h"
 
 #include <cstdio>
+#include <array>
+#include <cctype>
 #include <exception>
 #include <filesystem>
 #include <iomanip>
@@ -22,6 +24,152 @@ std::string ResolveResourceDirectory(const CompileRequest &request)
     if (!request.resource_directory.empty()) return request.resource_directory;
     if (request.source_path.empty()) return std::string();
     return std::filesystem::path(request.source_path).parent_path().string();
+}
+
+std::string Trim(std::string value)
+{
+    while (!value.empty() && std::isspace(
+            static_cast<unsigned char>(value.front()))) value.erase(value.begin());
+    while (!value.empty() && std::isspace(
+            static_cast<unsigned char>(value.back()))) value.pop_back();
+    return value;
+}
+
+std::string HeaderValue(const std::string &text, const std::string &name)
+{
+    std::istringstream input(text);
+    std::string line;
+    const std::string prefix = "#" + name;
+    while (std::getline(input, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.size() < prefix.size()) continue;
+        bool matches = true;
+        for (std::size_t index = 0; index < prefix.size(); ++index) {
+            if (std::tolower(static_cast<unsigned char>(line[index])) !=
+                std::tolower(static_cast<unsigned char>(prefix[index]))) {
+                matches = false;
+                break;
+            }
+        }
+        if (!matches) continue;
+        if (line.size() > prefix.size() &&
+            !std::isspace(static_cast<unsigned char>(line[prefix.size()]))) continue;
+        return Trim(line.substr(prefix.size()));
+    }
+    return {};
+}
+
+std::string ResolvePath(const std::string &value, const std::string &base)
+{
+    if (value.empty()) return {};
+    std::filesystem::path path(value);
+    if (path.is_relative() && !base.empty()) path = std::filesystem::path(base) / path;
+    return path.lexically_normal().string();
+}
+
+ServiceError RequireFile(const std::string &path, const std::string &label)
+{
+    if (path.empty()) return {};
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(path, error)) {
+        return {ServiceErrorCode::NotFound, label + " was not found: " + path,
+            path, true};
+    }
+    return {};
+}
+
+ServiceError ResolveAndValidateResources(const CompileRequest &request,
+    const std::string &documentDirectory, ResourceConfiguration &resources,
+    std::string &voiceTag, std::string &pcmTag)
+{
+    resources = request.resources;
+    resources.document_directory = documentDirectory;
+    resources.default_voice_file = ResolvePath(
+        resources.default_voice_file, documentDirectory);
+    resources.default_pcm_file = ResolvePath(
+        resources.default_pcm_file, documentDirectory);
+    resources.rhythm_directory = ResolvePath(
+        resources.rhythm_directory, documentDirectory);
+    resources.external_rom_directory = ResolvePath(
+        resources.external_rom_directory, documentDirectory);
+
+    voiceTag = HeaderValue(request.utf8_text, "voice");
+    pcmTag = HeaderValue(request.utf8_text, "pcm");
+    const std::string selectedVoice = voiceTag.empty()
+        ? request.resources.default_voice_file : voiceTag;
+    const std::string selectedPcm = pcmTag.empty()
+        ? request.resources.default_pcm_file : pcmTag;
+    const std::string voice = ResolvePath(selectedVoice, documentDirectory);
+    const std::string pcm = ResolvePath(selectedPcm, documentDirectory);
+    if (!selectedVoice.empty() &&
+        documentDirectory.empty() &&
+        std::filesystem::path(selectedVoice).is_relative()) {
+        return {ServiceErrorCode::InvalidArgument,
+            "A relative voice path requires the document to be saved first.",
+            selectedVoice, true};
+    }
+    if (!selectedPcm.empty() &&
+        documentDirectory.empty() &&
+        std::filesystem::path(selectedPcm).is_relative()) {
+        return {ServiceErrorCode::InvalidArgument,
+            "A relative PCM path requires the document to be saved first.",
+            selectedPcm, true};
+    }
+    if (ServiceError error = RequireFile(voice, "Voice file")) return error;
+    if (ServiceError error = RequireFile(pcm, "PCM file")) return error;
+
+    if (!resources.rhythm_directory.empty()) {
+        static constexpr std::array<const char *, 6> names = {
+            "2608_BD.WAV", "2608_SD.WAV", "2608_TOP.WAV",
+            "2608_HH.WAV", "2608_TOM.WAV", "2608_RIM.WAV"};
+        std::error_code error;
+        if (!std::filesystem::is_directory(resources.rhythm_directory, error)) {
+            return {ServiceErrorCode::NotFound,
+                "Rhythm directory was not found: " + resources.rhythm_directory,
+                resources.rhythm_directory, true};
+        }
+        std::vector<std::string> missing;
+        for (const char *name : names) {
+            std::filesystem::path path =
+                std::filesystem::path(resources.rhythm_directory) / name;
+            std::error_code fileError;
+            if (!std::filesystem::is_regular_file(path, fileError))
+                missing.push_back(name);
+        }
+        if (!missing.empty()) {
+            std::ostringstream message;
+            message << "Rhythm directory is missing:";
+            for (const auto &name : missing) message << ' ' << name;
+            return {ServiceErrorCode::NotFound, message.str(),
+                resources.rhythm_directory, true};
+        }
+    }
+
+    if (resources.use_external_rom) {
+        if (resources.external_rom_directory.empty()) {
+            return {ServiceErrorCode::InvalidArgument,
+                "External ROM mode requires an external ROM directory.", {}, true};
+        }
+        static constexpr std::array<const char *, 8> names = {
+            "expand", "errmsg", "msub", "muc88", "ssgdat", "time",
+            "smon", "music"};
+        std::vector<std::string> missing;
+        for (const char *name : names) {
+            std::filesystem::path path =
+                std::filesystem::path(resources.external_rom_directory) / name;
+            std::error_code fileError;
+            if (!std::filesystem::is_regular_file(path, fileError))
+                missing.push_back(name);
+        }
+        if (!missing.empty()) {
+            std::ostringstream message;
+            message << "External ROM directory is missing:";
+            for (const auto &name : missing) message << ' ' << name;
+            return {ServiceErrorCode::NotFound, message.str(),
+                resources.external_rom_directory, true};
+        }
+    }
+    return {};
 }
 
 std::vector<CompileDiagnostic> ParseDiagnostics(const std::string &messages)
@@ -107,6 +255,17 @@ public:
             return result;
         }
 
+        const std::string resourceDirectory = ResolveResourceDirectory(request);
+        ResourceConfiguration resources;
+        std::string voiceTag;
+        std::string pcmTag;
+        if (ServiceError error = ResolveAndValidateResources(request,
+                resourceDirectory, resources, voiceTag, pcmTag)) {
+            result.messages = error.message;
+            result.error = std::move(error);
+            return result;
+        }
+
         std::vector<char> text(request.utf8_text.begin(), request.utf8_text.end());
         text.push_back('\0');
 
@@ -122,10 +281,25 @@ public:
             return result;
         }
 
-        const std::string resourceDirectory = ResolveResourceDirectory(request);
         runtime.SetResourceDirectory(resourceDirectory.c_str());
+        runtime.SetExternalRomDirectory(resources.external_rom_directory.c_str());
         runtime.SetDriverMode(driver);
-        runtime.Reset(MUCOM_CMPOPT_COMPILE);
+        runtime.Reset(MUCOM_CMPOPT_COMPILE |
+            (resources.use_external_rom ? MUCOM_CMPOPT_USE_EXTROM : 0));
+        if (resources.use_external_rom && !runtime.ExternalRomLoadSucceeded()) {
+            result.messages = "Unable to load one or more external ROM files.";
+            result.error = {ServiceErrorCode::IoError, result.messages,
+                resources.external_rom_directory, true};
+            return result;
+        }
+        if (voiceTag.empty() && !resources.default_voice_file.empty() &&
+            runtime.LoadFMVoice(resources.default_voice_file.c_str(), true) != 0) {
+            result.messages = "Unable to load the default voice file: " +
+                resources.default_voice_file;
+            result.error = {ServiceErrorCode::InvalidData, result.messages,
+                resources.default_voice_file, true};
+            return result;
+        }
         result.status = runtime.CompileMem(text.data(), request.options);
         const char *messages = runtime.GetMessageBuffer();
         if (messages != nullptr) result.messages = messages;
@@ -173,8 +347,14 @@ public:
         }
         song->source_path = request.source_path;
         song->resource_directory = resourceDirectory;
-        song->resources = request.resources;
-        song->resources.document_directory = resourceDirectory;
+        song->resources = resources;
+        if (song->mub_bytes.size() >= sizeof(MUBHED)) {
+            int pcmSize = 0;
+            auto *header = reinterpret_cast<MUBHED *>(song->mub_bytes.data());
+            song->has_embedded_pcm = runtime.MUBValidate(header,
+                    static_cast<int>(song->mub_bytes.size())) &&
+                runtime.MUBGetPCMData(header, pcmSize) != nullptr && pcmSize > 0;
+        }
         song->document_id = request.document_id;
         song->revision = request.revision;
         song->content_id = ContentId(song->mub_bytes);

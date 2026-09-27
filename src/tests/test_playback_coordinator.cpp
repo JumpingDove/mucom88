@@ -113,5 +113,19 @@ int main()
     for (auto &completion : pending) completion();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     CHECK(test, playback->State() == mucom88::PlaybackState::Idle);
+
+    coordinator.CompileAndPlay(Request("sampl3.muc", 400, 4));
+    {
+        std::unique_lock<std::mutex> lock(dispatchMutex);
+        dispatchCondition.wait_for(lock, std::chrono::seconds(15), [&] {
+            return !compileCompletions.empty();
+        });
+        pending.swap(compileCompletions);
+    }
+    coordinator.CancelPendingPlay(400);
+    for (auto &completion : pending) completion();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    CHECK(test, playback->State() == mucom88::PlaybackState::Idle);
+    CHECK(test, coordinator.Snapshot().document_id == 0);
     return test.ExitCode();
 }

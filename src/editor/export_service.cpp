@@ -116,7 +116,11 @@ public:
                 static_cast<std::uint64_t>(request.sample_rate);
             {
                 CMucom runtime;
-                if (!runtime.Init(nullptr, MUCOM_OPTION_STEP, request.sample_rate)) {
+                const char *rhythmDirectory =
+                    request.song->resources.rhythm_directory.empty()
+                    ? nullptr : request.song->resources.rhythm_directory.c_str();
+                if (!runtime.Init(nullptr, MUCOM_OPTION_STEP,
+                        request.sample_rate, rhythmDirectory)) {
                     result.error = {ServiceErrorCode::RuntimeError,
                         "Unable to initialize the export runtime.", {}, false};
                 } else {
@@ -125,7 +129,13 @@ public:
                         request.song->resource_directory.c_str());
                     runtime.SetDriverMode(static_cast<int>(request.song->driver));
                     runtime.Reset(MUCOM_RESET_PLAYER);
-                    if (runtime.LoadMusicData(request.song->mub_bytes.data(),
+                    if (!request.song->has_embedded_pcm &&
+                        !request.song->resources.default_pcm_file.empty() &&
+                        runtime.LoadPCM(request.song->resources.default_pcm_file.c_str()) != 0) {
+                        result.error = {ServiceErrorCode::InvalidData,
+                            "Unable to load the default PCM file.",
+                            request.song->resources.default_pcm_file, true};
+                    } else if (runtime.LoadMusicData(request.song->mub_bytes.data(),
                             static_cast<int>(request.song->mub_bytes.size())) != 0) {
                         result.error = {ServiceErrorCode::InvalidData,
                             "Unable to load the compiled MUB for export.", {}, false};

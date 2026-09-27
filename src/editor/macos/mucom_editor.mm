@@ -68,6 +68,23 @@ std::string RecoveryRoot()
     return (std::filesystem::path(ApplicationSupportRoot()) / "Recovery").string();
 }
 
+NSString *PlaybackStateName(mucom88::PlaybackState state)
+{
+    switch (state) {
+    case mucom88::PlaybackState::Idle: return @"Idle";
+    case mucom88::PlaybackState::Preparing: return @"Preparing";
+    case mucom88::PlaybackState::Buffering: return @"Buffering";
+    case mucom88::PlaybackState::Playing: return @"Playing";
+    case mucom88::PlaybackState::Paused: return @"Paused";
+    case mucom88::PlaybackState::Draining: return @"Draining";
+    case mucom88::PlaybackState::Finished: return @"Finished";
+    case mucom88::PlaybackState::Stopping: return @"Stopping";
+    case mucom88::PlaybackState::DeviceLost: return @"Device lost";
+    case mucom88::PlaybackState::Failed: return @"Failed";
+    }
+    return @"Unknown";
+}
+
 void CreateBackup(NSURL *url, mucom88::DocumentId documentId)
 {
     if (url == nil || !url.isFileURL ||
@@ -349,12 +366,38 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     NSTextView *_editorView;
     NSTextView *_messageView;
     NSTextField *_statusLabel;
+    NSTextField *_playbackLabel;
+    NSProgressIndicator *_playbackProgress;
+    NSButton *_playButton;
+    NSButton *_pauseButton;
+    NSButton *_stopButton;
+    NSButton *_fastForwardButton;
+    NSPopUpButton *_speedPopup;
     LineNumberRulerView *_lineRuler;
     NSTimer *_recoveryTimer;
+    NSTimer *_playbackTimer;
+    mucom88::PlaybackSubscriptionId _playbackSubscription;
+    NSInteger _fastForwardMultiplier;
+    BOOL _fastForwarding;
     NSString *_restoredRecoveryPath;
     BOOL _updatingEditor;
 }
 - (IBAction)compileDocument:(id)sender;
+- (IBAction)compileAndPlayDocument:(id)sender;
+- (IBAction)pauseResumePlayback:(id)sender;
+- (IBAction)stopPlayback:(id)sender;
+- (IBAction)toggleFastForward:(id)sender;
+- (IBAction)changeFastForwardSpeed:(id)sender;
+- (IBAction)beginMomentaryFastForward:(id)sender;
+- (IBAction)endMomentaryFastForward:(id)sender;
+- (IBAction)chooseDefaultPCM:(id)sender;
+- (IBAction)chooseDefaultVoice:(id)sender;
+- (IBAction)chooseExternalROMDirectory:(id)sender;
+- (IBAction)chooseRhythmDirectory:(id)sender;
+- (IBAction)toggleExternalROM:(id)sender;
+- (IBAction)clearResourceOverrides:(id)sender;
+- (void)updatePlaybackUI;
+- (mucom88::CompileRequest)configuredCompileRequest;
 - (IBAction)goToLine:(id)sender;
 - (IBAction)changeEncoding:(id)sender;
 - (BOOL)restoreRecoveryAtPath:(NSString *)path error:(NSError **)error;
@@ -370,6 +413,7 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
         _model->NewDocument();
         _services = mucom88::SharedApplicationServices();
         _recoveryCancelled = std::make_shared<std::atomic<bool>>(false);
+        _fastForwardMultiplier = 2;
     }
     return self;
 }
@@ -405,12 +449,43 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     compileButton.keyEquivalentModifierMask = NSEventModifierFlagCommand;
     _statusLabel = [NSTextField labelWithString:@""];
     _statusLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+    _playButton = [NSButton buttonWithTitle:@"Compile & Play"
+        target:self action:@selector(compileAndPlayDocument:)];
+    _pauseButton = [NSButton buttonWithTitle:@"Pause"
+        target:self action:@selector(pauseResumePlayback:)];
+    _stopButton = [NSButton buttonWithTitle:@"Stop"
+        target:self action:@selector(stopPlayback:)];
+    _fastForwardButton = [NSButton buttonWithTitle:@"Fast"
+        target:self action:@selector(toggleFastForward:)];
+    _fastForwardButton.buttonType = NSButtonTypeToggle;
+    _speedPopup = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
+    for (NSNumber *speed in @[@2, @4, @6, @8, @10]) {
+        [_speedPopup addItemWithTitle:[NSString stringWithFormat:@"x%@", speed]];
+        _speedPopup.lastItem.tag = speed.integerValue;
+    }
+    _speedPopup.target = self;
+    _speedPopup.action = @selector(changeFastForwardSpeed:);
     NSStackView *controlBar = [NSStackView stackViewWithViews:
-        @[compileButton, _statusLabel]];
+        @[compileButton, _playButton, _pauseButton, _stopButton,
+          _fastForwardButton, _speedPopup, _statusLabel]];
     controlBar.orientation = NSUserInterfaceLayoutOrientationHorizontal;
     controlBar.alignment = NSLayoutAttributeCenterY;
     controlBar.spacing = 10.0;
     [_statusLabel setContentHuggingPriority:NSLayoutPriorityDefaultLow
+        forOrientation:NSLayoutConstraintOrientationHorizontal];
+
+    _playbackProgress = [[NSProgressIndicator alloc] initWithFrame:NSZeroRect];
+    _playbackProgress.indeterminate = NO;
+    _playbackProgress.minValue = 0.0;
+    _playbackProgress.maxValue = 1.0;
+    _playbackLabel = [NSTextField labelWithString:@"Idle"];
+    _playbackLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+    NSStackView *playbackBar = [NSStackView stackViewWithViews:
+        @[_playbackProgress, _playbackLabel]];
+    playbackBar.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+    playbackBar.alignment = NSLayoutAttributeCenterY;
+    playbackBar.spacing = 10.0;
+    [_playbackLabel setContentHuggingPriority:NSLayoutPriorityDefaultLow
         forOrientation:NSLayoutConstraintOrientationHorizontal];
 
     NSScrollView *editorScroll = [[NSScrollView alloc] initWithFrame:NSZeroRect];
@@ -462,7 +537,7 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     messageScroll.documentView = _messageView;
 
     NSStackView *layout = [NSStackView stackViewWithViews:
-        @[controlBar, editorScroll, messageScroll]];
+        @[controlBar, playbackBar, editorScroll, messageScroll]];
     layout.translatesAutoresizingMaskIntoConstraints = NO;
     layout.orientation = NSUserInterfaceLayoutOrientationVertical;
     layout.alignment = NSLayoutAttributeLeading;
@@ -474,6 +549,8 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
         [layout.topAnchor constraintEqualToAnchor:content.topAnchor constant:12.0],
         [layout.bottomAnchor constraintEqualToAnchor:content.bottomAnchor constant:-12.0],
         [controlBar.widthAnchor constraintEqualToAnchor:layout.widthAnchor],
+        [playbackBar.widthAnchor constraintEqualToAnchor:layout.widthAnchor],
+        [_playbackProgress.widthAnchor constraintGreaterThanOrEqualToConstant:180.0],
         [editorScroll.widthAnchor constraintEqualToAnchor:layout.widthAnchor],
         [messageScroll.widthAnchor constraintEqualToAnchor:layout.widthAnchor],
         [messageScroll.heightAnchor constraintEqualToConstant:150.0]
@@ -485,6 +562,20 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     _updatingEditor = NO;
     [_lineRuler reloadLineNumbers];
     [self updateStatus];
+    __weak MucomDocument *weakSelf = self;
+    _playbackSubscription = _services->playback_coordinator->Subscribe(
+        [weakSelf](mucom88::PlaybackCoordinatorSnapshot snapshot) {
+            (void)snapshot;
+            MucomDocument *document = weakSelf;
+            if (document != nil) [document updatePlaybackUI];
+        });
+    _playbackTimer = [NSTimer scheduledTimerWithTimeInterval:(1.0 / 15.0)
+        repeats:YES block:^(NSTimer *timer) {
+            (void)timer;
+            MucomDocument *document = weakSelf;
+            if (document != nil) [document updatePlaybackUI];
+        }];
+    [self updatePlaybackUI];
     [self addWindowController:[[NSWindowController alloc] initWithWindow:window]];
 }
 
@@ -627,6 +718,11 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     if (_updatingEditor || notification.object != _editorView) return;
     NSError *error = nil;
     if ([self syncModelFromEditor:&error]) {
+        // A compile-and-play request is tied to the captured revision. Editing
+        // cancels an in-flight compile so it cannot start stale audio.
+        _compileOperation.Cancel();
+        _services->playback_coordinator->CancelPendingPlay(
+            _model->Snapshot().document_id);
         NSDocumentChangeType change = NSChangeDone;
         if (self.undoManager.isUndoing) change = NSChangeUndone;
         else if (self.undoManager.isRedoing) change = NSChangeRedone;
@@ -746,6 +842,226 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     [_messageView.textStorage setAttributedString:output];
 }
 
+- (mucom88::CompileRequest)configuredCompileRequest
+{
+    mucom88::CompileRequest request = _model->MakeCompileRequest();
+    request.resources = _services->resources;
+    request.resources.document_directory = request.resource_directory;
+    return request;
+}
+
+- (void)updatePlaybackUI
+{
+    if (_playbackLabel == nil || _services == nullptr) return;
+    const auto snapshot = _services->playback_coordinator->Snapshot();
+    const auto document = _model->Snapshot();
+    NSString *owner = snapshot.document_id != 0 &&
+        snapshot.document_id != document.document_id ? @"Other document • " : @"";
+    NSString *detail = @"";
+    if (snapshot.error) detail = [NSString stringWithFormat:@" • %@",
+        StringFromUtf8(snapshot.error.message)];
+    const auto monitor = snapshot.monitor;
+    if (snapshot.state != mucom88::PlaybackState::Idle &&
+        monitor != nullptr && monitor->max_count > 0) {
+        _playbackProgress.indeterminate = NO;
+        [_playbackProgress stopAnimation:nil];
+        _playbackProgress.maxValue = monitor->max_count;
+        _playbackProgress.doubleValue = monitor->current_count;
+        _playbackLabel.stringValue = [NSString stringWithFormat:
+            @"%@%@ • driver %d • %d/%d • loop %d • x%d%@", owner,
+            PlaybackStateName(snapshot.state), static_cast<int>(monitor->driver),
+            monitor->current_count, monitor->max_count,
+            monitor->loop_count, monitor->speed, detail];
+    } else {
+        const BOOL busy = snapshot.state == mucom88::PlaybackState::Preparing ||
+            snapshot.state == mucom88::PlaybackState::Buffering;
+        _playbackProgress.indeterminate = busy;
+        if (busy) [_playbackProgress startAnimation:nil];
+        else {
+            [_playbackProgress stopAnimation:nil];
+            _playbackProgress.doubleValue = 0.0;
+        }
+        _playbackLabel.stringValue = [NSString stringWithFormat:@"%@%@%@",
+            owner, PlaybackStateName(snapshot.state), detail];
+    }
+    _pauseButton.title = snapshot.state == mucom88::PlaybackState::Paused
+        ? @"Resume" : @"Pause";
+    mucom88::EditorCommandState state;
+    state.has_document = true;
+    state.has_text_view = _editorView != nil;
+    state.compiler_ready = _services->compiler->IsReady();
+    state.playback_ui_ready = true;
+    state.playback_state = snapshot.state;
+    _playButton.enabled = mucom88::IsEditorCommandEnabled(
+        mucom88::EditorCommand::CompileAndPlay, state);
+    _pauseButton.enabled = mucom88::IsEditorCommandEnabled(
+        mucom88::EditorCommand::PauseResume, state);
+    _stopButton.enabled = mucom88::IsEditorCommandEnabled(
+        mucom88::EditorCommand::Stop, state);
+    const BOOL fastEnabled = mucom88::IsEditorCommandEnabled(
+        mucom88::EditorCommand::FastForward, state);
+    _fastForwardButton.enabled = fastEnabled;
+    _speedPopup.enabled = fastEnabled;
+    if (!fastEnabled && _fastForwarding) {
+        _fastForwarding = NO;
+        _fastForwardButton.state = NSControlStateValueOff;
+    }
+}
+
+- (IBAction)compileAndPlayDocument:(id)sender
+{
+    (void)sender;
+    NSError *error = nil;
+    if (![self syncModelFromEditor:&error]) {
+        _statusLabel.stringValue = error.localizedDescription;
+        return;
+    }
+    _compileOperation.Cancel();
+    _statusLabel.stringValue = @"Compiling for playback…";
+    __weak MucomDocument *weakSelf = self;
+    _compileOperation = _services->playback_coordinator->CompileAndPlay(
+        [self configuredCompileRequest], {},
+        [weakSelf](mucom88::CompileResult result) mutable {
+            MucomDocument *document = weakSelf;
+            if (document == nil) return;
+            const auto current = document->_model->Snapshot();
+            if (result.document_id != current.document_id ||
+                result.revision != current.revision) return;
+            [document showCompileResult:result];
+            if (result.Succeeded()) {
+                document->_statusLabel.stringValue = @"Compiled; starting playback…";
+            } else if (result.error.code != mucom88::ServiceErrorCode::Cancelled) {
+                document->_statusLabel.stringValue = StringFromUtf8(
+                    result.error.message.empty() ? "Compile failed" :
+                        result.error.message);
+                if (!result.diagnostics.empty())
+                    [document selectLine:result.diagnostics.front().line];
+            }
+        });
+}
+
+- (IBAction)pauseResumePlayback:(id)sender
+{
+    (void)sender;
+    const auto state = _services->playback_coordinator->Snapshot().state;
+    if (state != mucom88::PlaybackState::Buffering &&
+        state != mucom88::PlaybackState::Playing &&
+        state != mucom88::PlaybackState::Paused) return;
+    _services->playback_coordinator->TogglePauseResume();
+}
+
+- (IBAction)stopPlayback:(id)sender
+{
+    (void)sender;
+    _fastForwarding = NO;
+    _fastForwardButton.state = NSControlStateValueOff;
+    _services->playback_coordinator->Stop();
+}
+
+- (IBAction)toggleFastForward:(id)sender
+{
+    (void)sender;
+    const auto state = _services->playback_coordinator->Snapshot().state;
+    if (state != mucom88::PlaybackState::Buffering &&
+        state != mucom88::PlaybackState::Playing &&
+        state != mucom88::PlaybackState::Paused) return;
+    _fastForwarding = !_fastForwarding;
+    _fastForwardButton.state = _fastForwarding
+        ? NSControlStateValueOn : NSControlStateValueOff;
+    _services->playback_coordinator->SetSpeed(
+        _fastForwarding ? static_cast<int>(_fastForwardMultiplier) : 1);
+}
+
+- (IBAction)changeFastForwardSpeed:(id)sender
+{
+    (void)sender;
+    _fastForwardMultiplier = _speedPopup.selectedItem.tag;
+    if (_fastForwarding) _services->playback_coordinator->SetSpeed(
+        static_cast<int>(_fastForwardMultiplier));
+}
+
+- (IBAction)beginMomentaryFastForward:(id)sender
+{
+    (void)sender;
+    const auto state = _services->playback_coordinator->Snapshot().state;
+    if (state != mucom88::PlaybackState::Buffering &&
+        state != mucom88::PlaybackState::Playing &&
+        state != mucom88::PlaybackState::Paused) return;
+    if (_fastForwarding) return;
+    _fastForwarding = YES;
+    _fastForwardButton.state = NSControlStateValueOn;
+    _services->playback_coordinator->SetSpeed(
+        static_cast<int>(_fastForwardMultiplier));
+}
+
+- (IBAction)endMomentaryFastForward:(id)sender
+{
+    (void)sender;
+    if (!_fastForwarding) return;
+    _fastForwarding = NO;
+    _fastForwardButton.state = NSControlStateValueOff;
+    _services->playback_coordinator->SetSpeed(1);
+}
+
+- (NSURL *)chooseResourceWithTitle:(NSString *)title directory:(BOOL)directory
+{
+    NSOpenPanel *panel = [NSOpenPanel openPanel];
+    panel.title = title;
+    panel.canChooseDirectories = directory;
+    panel.canChooseFiles = !directory;
+    panel.allowsMultipleSelection = NO;
+    return [panel runModal] == NSModalResponseOK ? panel.URL : nil;
+}
+
+- (IBAction)chooseDefaultPCM:(id)sender
+{
+    (void)sender;
+    NSURL *url = [self chooseResourceWithTitle:@"Choose Default PCM File"
+        directory:NO];
+    if (url != nil) _services->resources.default_pcm_file =
+        url.fileSystemRepresentation;
+}
+
+- (IBAction)chooseDefaultVoice:(id)sender
+{
+    (void)sender;
+    NSURL *url = [self chooseResourceWithTitle:@"Choose Default Voice File"
+        directory:NO];
+    if (url != nil) _services->resources.default_voice_file =
+        url.fileSystemRepresentation;
+}
+
+- (IBAction)chooseExternalROMDirectory:(id)sender
+{
+    (void)sender;
+    NSURL *url = [self chooseResourceWithTitle:@"Choose External ROM Directory"
+        directory:YES];
+    if (url != nil) _services->resources.external_rom_directory =
+        url.fileSystemRepresentation;
+}
+
+- (IBAction)chooseRhythmDirectory:(id)sender
+{
+    (void)sender;
+    NSURL *url = [self chooseResourceWithTitle:@"Choose Rhythm Directory"
+        directory:YES];
+    if (url != nil) _services->resources.rhythm_directory =
+        url.fileSystemRepresentation;
+}
+
+- (IBAction)toggleExternalROM:(id)sender
+{
+    (void)sender;
+    _services->resources.use_external_rom =
+        !_services->resources.use_external_rom;
+}
+
+- (IBAction)clearResourceOverrides:(id)sender
+{
+    (void)sender;
+    _services->resources = {};
+}
+
 - (IBAction)compileDocument:(id)sender
 {
     (void)sender;
@@ -758,7 +1074,7 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
         _statusLabel.stringValue = @"MUCOM88 initialization failed";
         return;
     }
-    mucom88::CompileRequest request = _model->MakeCompileRequest();
+    mucom88::CompileRequest request = [self configuredCompileRequest];
     _statusLabel.stringValue = @"Compiling…";
     _compileOperation.Cancel();
     __weak MucomDocument *weakSelf = self;
@@ -788,6 +1104,10 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     state.has_document = YES;
     state.has_text_view = _editorView != nil;
     state.compiler_ready = _services != nullptr && _services->compiler->IsReady();
+    state.playback_ui_ready = _services != nullptr &&
+        _services->playback_coordinator != nullptr;
+    if (state.playback_ui_ready) state.playback_state =
+        _services->playback_coordinator->Snapshot().state;
     if (item.action == @selector(compileDocument:)) {
         return mucom88::IsEditorCommandEnabled(
             mucom88::EditorCommand::Compile, state);
@@ -796,6 +1116,31 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
         return mucom88::IsEditorCommandEnabled(
             mucom88::EditorCommand::GoToLine, state);
     }
+    if (item.action == @selector(compileAndPlayDocument:)) return
+        mucom88::IsEditorCommandEnabled(
+            mucom88::EditorCommand::CompileAndPlay, state);
+    if (item.action == @selector(pauseResumePlayback:)) return
+        mucom88::IsEditorCommandEnabled(
+            mucom88::EditorCommand::PauseResume, state);
+    if (item.action == @selector(stopPlayback:)) return
+        mucom88::IsEditorCommandEnabled(mucom88::EditorCommand::Stop, state);
+    if (item.action == @selector(toggleFastForward:) ||
+        item.action == @selector(beginMomentaryFastForward:) ||
+        item.action == @selector(endMomentaryFastForward:)) return
+        mucom88::IsEditorCommandEnabled(
+            mucom88::EditorCommand::FastForward, state);
+    if (item.action == @selector(toggleExternalROM:)) {
+        if ([(id)item isKindOfClass:NSMenuItem.class]) {
+            ((NSMenuItem *)item).state = _services->resources.use_external_rom
+                ? NSControlStateValueOn : NSControlStateValueOff;
+        }
+        return YES;
+    }
+    if (item.action == @selector(chooseDefaultPCM:) ||
+        item.action == @selector(chooseDefaultVoice:) ||
+        item.action == @selector(chooseExternalROMDirectory:) ||
+        item.action == @selector(chooseRhythmDirectory:) ||
+        item.action == @selector(clearResourceOverrides:)) return YES;
     if (item.action == @selector(changeEncoding:)) return state.has_text_view;
     return [super validateUserInterfaceItem:item];
 }
@@ -824,6 +1169,13 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
 - (void)close
 {
     [_recoveryTimer invalidate];
+    [_playbackTimer invalidate];
+    if (_playbackSubscription != 0 && _services != nullptr) {
+        _services->playback_coordinator->Unsubscribe(_playbackSubscription);
+        _playbackSubscription = 0;
+    }
+    if (_services != nullptr) _services->playback_coordinator->DocumentClosed(
+        _model->Snapshot().document_id);
     _recoveryCancelled->store(true, std::memory_order_release);
     mucom88::RecoveryService recovery(RecoveryRoot());
     recovery.RemoveDocument(_model->Snapshot().document_id);
@@ -836,6 +1188,9 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
 - (void)dealloc
 {
     [_recoveryTimer invalidate];
+    [_playbackTimer invalidate];
+    if (_playbackSubscription != 0 && _services != nullptr)
+        _services->playback_coordinator->Unsubscribe(_playbackSubscription);
     _compileOperation.Cancel();
 }
 
@@ -843,6 +1198,8 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
 
 @interface MucomAppDelegate : NSObject <NSApplicationDelegate> {
     std::shared_ptr<mucom88::ApplicationServices> _services;
+    id _eventMonitor;
+    BOOL _controlF1Held;
 }
 @end
 
@@ -931,6 +1288,35 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     NSMenu *buildMenu = [[NSMenu alloc] initWithTitle:@"Build"];
     buildItem.submenu = buildMenu;
     AddMenuItem(buildMenu, @"Compile", @selector(compileDocument:), @"r");
+    AddMenuItem(buildMenu, @"Compile & Play (F5 / F12)",
+        @selector(compileAndPlayDocument:), @"");
+
+    NSMenuItem *playbackItem = [[NSMenuItem alloc] init];
+    [mainMenu addItem:playbackItem];
+    NSMenu *playbackMenu = [[NSMenu alloc] initWithTitle:@"Playback"];
+    playbackItem.submenu = playbackMenu;
+    AddMenuItem(playbackMenu, @"Pause / Resume (Esc)",
+        @selector(pauseResumePlayback:), @"");
+    AddMenuItem(playbackMenu, @"Stop", @selector(stopPlayback:), @"");
+    AddMenuItem(playbackMenu, @"Fast Forward", @selector(toggleFastForward:), @"");
+    [playbackMenu addItem:NSMenuItem.separatorItem];
+    NSMenuItem *resourcesItem = AddMenuItem(
+        playbackMenu, @"Resources", nil, @"");
+    NSMenu *resourcesMenu = [[NSMenu alloc] initWithTitle:@"Resources"];
+    resourcesItem.submenu = resourcesMenu;
+    AddMenuItem(resourcesMenu, @"Choose Default PCM…",
+        @selector(chooseDefaultPCM:), @"");
+    AddMenuItem(resourcesMenu, @"Choose Default Voice…",
+        @selector(chooseDefaultVoice:), @"");
+    AddMenuItem(resourcesMenu, @"Choose Rhythm Directory…",
+        @selector(chooseRhythmDirectory:), @"");
+    AddMenuItem(resourcesMenu, @"Choose External ROM Directory…",
+        @selector(chooseExternalROMDirectory:), @"");
+    AddMenuItem(resourcesMenu, @"Use External ROM",
+        @selector(toggleExternalROM:), @"");
+    [resourcesMenu addItem:NSMenuItem.separatorItem];
+    AddMenuItem(resourcesMenu, @"Clear Resource Overrides",
+        @selector(clearResourceOverrides:), @"");
 
     NSMenuItem *windowItem = [[NSMenuItem alloc] init];
     [mainMenu addItem:windowItem];
@@ -953,6 +1339,49 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
         std::move(mainDispatcher));
     mucom88::InstallApplicationServices(_services);
     [self installMainMenu];
+    __weak MucomAppDelegate *weakSelf = self;
+    _eventMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:
+        (NSEventMaskKeyDown | NSEventMaskKeyUp)
+        handler:^NSEvent *(NSEvent *event) {
+            MucomAppDelegate *delegate = weakSelf;
+            if (delegate == nil) return event;
+            NSString *characters = event.charactersIgnoringModifiers;
+            const unichar key = characters.length > 0
+                ? [characters characterAtIndex:0] : 0;
+            const BOOL keyDown = event.type == NSEventTypeKeyDown;
+            if (keyDown && !event.isARepeat &&
+                (key == NSF5FunctionKey || key == NSF12FunctionKey)) {
+                if ([NSApp sendAction:@selector(compileAndPlayDocument:)
+                        to:nil from:nil]) return nil;
+            }
+            if (keyDown && key == 0x1b) {
+                if ([NSApp sendAction:@selector(pauseResumePlayback:)
+                        to:nil from:nil]) return nil;
+            }
+            const BOOL controlF1 = key == NSF1FunctionKey &&
+                (event.modifierFlags & NSEventModifierFlagControl) != 0;
+            if (controlF1 && keyDown && !delegate->_controlF1Held) {
+                delegate->_controlF1Held = YES;
+                if ([NSApp sendAction:@selector(beginMomentaryFastForward:)
+                        to:nil from:nil]) return nil;
+            } else if (key == NSF1FunctionKey && !keyDown &&
+                delegate->_controlF1Held) {
+                delegate->_controlF1Held = NO;
+                [NSApp sendAction:@selector(endMomentaryFastForward:)
+                    to:nil from:nil];
+                return nil;
+            }
+            return event;
+        }];
+}
+
+- (void)applicationDidResignActive:(NSNotification *)notification
+{
+    (void)notification;
+    if (_controlF1Held) {
+        _controlF1Held = NO;
+        [NSApp sendAction:@selector(endMomentaryFastForward:) to:nil from:nil];
+    }
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification
@@ -1001,6 +1430,10 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
 - (void)applicationWillTerminate:(NSNotification *)notification
 {
     (void)notification;
+    if (_eventMonitor != nil) {
+        [NSEvent removeMonitor:_eventMonitor];
+        _eventMonitor = nil;
+    }
     mucom88::InstallApplicationServices(nullptr);
     _services.reset();
 }

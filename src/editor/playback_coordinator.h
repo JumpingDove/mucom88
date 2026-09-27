@@ -42,6 +42,7 @@ public:
     OperationHandle TogglePauseResume();
     OperationHandle Stop();
     OperationHandle SetSpeed(int multiplier);
+    void CancelPendingPlay(DocumentId documentId);
     void DocumentClosed(DocumentId documentId);
 
     PlaybackSubscriptionId Subscribe(PlaybackCoordinatorObserver observer);

@@ -8,6 +8,7 @@
 #include "editor/mucom_compile_service.h"
 #include "editor/playback_session.h"
 #include "editor/playback_coordinator.h"
+#include "editor/resource_configuration.h"
 #include "editor/service_types.h"
 #include "editor/voice_service.h"
 
@@ -28,6 +29,9 @@ public:
     std::shared_ptr<PlaybackCoordinator> playback_coordinator;
     std::shared_ptr<ExportService> exporter;
     std::shared_ptr<VoiceService> voices;
+    // App-session resource preferences. AppKit accesses this on its main
+    // thread and copies it into every immutable compile request.
+    ResourceConfiguration resources;
 };
 
 void InstallApplicationServices(std::shared_ptr<ApplicationServices> services);

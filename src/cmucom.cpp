@@ -154,6 +154,7 @@ CMucom::CMucom( void )
 	music_start_address = MUCOM_ADDRESS_MUSIC;
 	last_compile_error_code = 0;
 	last_compile_error_line = 0;
+	external_rom_load_succeeded = true;
 
 	p_log = NULL;
 	p_wav = NULL;
@@ -197,7 +198,8 @@ bool CMucom::SetLogFilename(const char *filename) {
 }
 
 
-bool CMucom::Init(void *window, int option, int rate)
+bool CMucom::Init(void *window, int option, int rate,
+	const char *rhythmDirectory)
 {
 	//		MUCOM88の初期化(初回だけ呼び出してください)
 	//		window : 0   = ウインドウハンドル(HWND)
@@ -217,7 +219,8 @@ bool CMucom::Init(void *window, int option, int rate)
 		vm->SetWindow(window);
 	}
 	vm->SetOption(option);
-	const bool soundInitialized = vm->InitSoundSystem(AudioCurrentRate);
+	const bool soundInitialized =
+		vm->InitSoundSystem(AudioCurrentRate, rhythmDirectory);
 	MusicBufferInit();
 	vm->SetMucomInstance(this);			// Mucomのインスタンスを通知する(プラグイン用)
 
@@ -269,6 +272,7 @@ void CMucom::Reset(int option)
 	//
 	int devres;
 
+	external_rom_load_succeeded = true;
 	vm->SetOrignalMode(original_mode);
 
 	vm->SetLogWriter(p_log);
@@ -320,7 +324,7 @@ void CMucom::LoadPlayer(int option)
 
 	if (option & MUCOM_CMPOPT_USE_EXTROM) {
 		//	プレイヤーをファイルから読む
-		vm->LoadMem("music", MUCOM_ADDRESS_MUSIC, 0);
+		LoadExternalRom("music", MUCOM_ADDRESS_MUSIC);
 	} else {
 		//	内部のプレイヤーを読む
 		vm->SendMem(bin_music2, MUCOM_ADDRESS_MUSIC, music2_size);
@@ -360,17 +364,17 @@ void CMucom::LoadModBinary(int option)
 	StoreFMVoice((unsigned char*)bin_voice_dat);
 
 	if (option & MUCOM_CMPOPT_USE_EXTROM) {
-		vm->LoadMem("expand", MUCOM_ADDRESS_EM_EXPAND, 0);
-		vm->LoadMem("errmsg", MUCOM_ADDRESS_EM_ERRMSG, 0);
-		vm->LoadMem("msub", MUCOM_ADDRESS_EM_MSUB, 0);
-		vm->LoadMem("muc88", MUCOM_ADDRESS_EM_MUC88, 0);
-		vm->LoadMem("ssgdat", MUCOM_ADDRESS_EM_SSGDAT, 0);
-		vm->LoadMem("time", MUCOM_ADDRESS_EM_TIME, 0);
-		vm->LoadMem("smon", MUCOM_ADDRESS_EM_SMON, 0);
+		LoadExternalRom("expand", MUCOM_ADDRESS_EM_EXPAND);
+		LoadExternalRom("errmsg", MUCOM_ADDRESS_EM_ERRMSG);
+		LoadExternalRom("msub", MUCOM_ADDRESS_EM_MSUB);
+		LoadExternalRom("muc88", MUCOM_ADDRESS_EM_MUC88);
+		LoadExternalRom("ssgdat", MUCOM_ADDRESS_EM_SSGDAT);
+		LoadExternalRom("time", MUCOM_ADDRESS_EM_TIME);
+		LoadExternalRom("smon", MUCOM_ADDRESS_EM_SMON);
 
-		vm->LoadMem("music", MUCOM_ADDRESS_EM_MUSIC, 0);
+		LoadExternalRom("music", MUCOM_ADDRESS_EM_MUSIC);
 
-		LoadFMVoice(MUCOM_DEFAULT_VOICEFILE, true);
+		LoadFMVoice(ResolveExternalRomPath("voice.dat").c_str(), true);
 	}
 }
 
@@ -379,14 +383,14 @@ void CMucom::LoadExternalCompiler()
 	if (!original_mode) { return; }
 
 	//	コンパイラをファイルから読む
-	vm->LoadMem("expand", MUCOM_ADDRESS_EXPAND, 0);
-	vm->LoadMem("errmsg", MUCOM_ADDRESS_ERRMSG, 0);
-	vm->LoadMem("msub", MUCOM_ADDRESS_MSUB, 0);
-	vm->LoadMem("muc88", MUCOM_ADDRESS_MUC88, 0);
-	vm->LoadMem("ssgdat", MUCOM_ADDRESS_SSGDAT, 0);
-	vm->LoadMem("time", MUCOM_ADDRESS_TIME, 0);
-	vm->LoadMem("smon", MUCOM_ADDRESS_SMON, 0);
-	LoadFMVoice(MUCOM_DEFAULT_VOICEFILE, true);
+	LoadExternalRom("expand", MUCOM_ADDRESS_EXPAND);
+	LoadExternalRom("errmsg", MUCOM_ADDRESS_ERRMSG);
+	LoadExternalRom("msub", MUCOM_ADDRESS_MSUB);
+	LoadExternalRom("muc88", MUCOM_ADDRESS_MUC88);
+	LoadExternalRom("ssgdat", MUCOM_ADDRESS_SSGDAT);
+	LoadExternalRom("time", MUCOM_ADDRESS_TIME);
+	LoadExternalRom("smon", MUCOM_ADDRESS_SMON);
+	LoadFMVoice(ResolveExternalRomPath("voice.dat").c_str(), true);
 }
 
 void CMucom::LoadInternalCompiler()
@@ -1242,6 +1246,16 @@ void CMucom::SetResourceDirectory(const char *directory)
 	}
 }
 
+void CMucom::SetExternalRomDirectory(const char *directory)
+{
+	external_rom_directory = directory == NULL ? "" : directory;
+	while (external_rom_directory.size() > 1 &&
+		(external_rom_directory.back() == '/' ||
+		 external_rom_directory.back() == '\\')) {
+		external_rom_directory.pop_back();
+	}
+}
+
 
 std::string CMucom::ResolveResourcePath(const char *filename) const
 {
@@ -1251,6 +1265,21 @@ std::string CMucom::ResolveResourcePath(const char *filename) const
 		(path.size() >= 2 && path[1] == ':');
 	if (absolute || resource_directory.empty()) return path;
 	return resource_directory + "/" + path;
+}
+
+std::string CMucom::ResolveExternalRomPath(const char *filename) const
+{
+	if (filename == NULL || *filename == 0) return std::string();
+	if (external_rom_directory.empty()) return filename;
+	return external_rom_directory + "/" + filename;
+}
+
+int CMucom::LoadExternalRom(const char *filename, int address)
+{
+	const int loaded = vm->LoadMem(
+		ResolveExternalRomPath(filename).c_str(), address, 0);
+	if (loaded <= 0) external_rom_load_succeeded = false;
+	return loaded;
 }
 
 void CMucom::EnableBreakPoint(uint16_t adr)

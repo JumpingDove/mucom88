@@ -718,11 +718,11 @@ diagnosticは通常1件だが、UIとservice contractは複数件を保持・選
 
 ## Phase 4: 再生GUIとAudio
 
-- [ ] 編集中snapshotの非同期compile・即時再生
-- [ ] play、pause、resume、stop、Esc操作
-- [ ] x2、x4、x6、x8、x10の早送り
-- [ ] 再生位置、最大count、driver、状態表示
-- [ ] PCM、voice、ROM、rhythm directoryの選択
+- [x] 編集中snapshotの非同期compile・即時再生
+- [x] play、pause、resume、stop、Esc操作
+- [x] x2、x4、x6、x8、x10の早送り
+- [x] 再生位置、最大count、driver、状態表示
+- [x] PCM、voice、ROM、rhythm directoryの選択
 - [ ] output device列挙、選択、default変更、切断、再接続
 - [ ] requested／obtained format差の変換または明確なerror
 - [ ] 曲末尾の自動停止と次曲への遷移
@@ -872,8 +872,8 @@ user-facingなautomatic playerを先取りしない。
 | 段階 | 実施内容 | 完了gate |
 |---|---|---|
 | 4-0（完了） | resource値型、Coordinator、command状態、診断値の定義 | stale play intent、複数document、drop／refill単体試験 |
-| 4-1 | default PCM／voice、rhythm、外部ROMの明示path | 起動directory非依存、欠落resourceの明確なerror |
-| 4-2 | compile-and-play、transport、progress、shortcut | F5／F12、Esc、Control-F1とbutton／menuの結果が一致 |
+| 4-1（完了） | default PCM／voice、rhythm、外部ROMの明示path | 起動directory非依存、欠落resourceの明確なerror |
+| 4-2（完了） | compile-and-play、transport、progress、shortcut | F5／F12、Esc、Control-F1とbutton／menuの結果が一致 |
 | 4-3 | device picker、hotplug、DeviceLost、Reconnect、format表示 | 切断時に無断切替せず、選択後に曲頭から再接続 |
 | 4-4 | 診断表示、fade-in／out、曲末hook | 反復操作でhangせず、sample不連続試験が成功 |
 | 4-5 | dummy／sanitizer回帰 | 全既存CTestとPhase 4追加試験がDebug／Release／sanitizerで成功 |
@@ -900,6 +900,25 @@ audio診断へ`refill_events`を追加し、runtime生成frameと実際に破棄
 document close、Stop後の遅延compileを検証した。`editor_command_test`、`compile_service_test`、
 `audio_device_service_test`も新しいcontractを検証する。Release buildと全21 CTestは成功した。Debugおよび
 sanitizer全構成は4-5のgateとして未実施である。
+
+**4-1／4-2完了日: 2026-09-27**
+
+default voiceはタグがない場合だけcompile前に読み込み、default PCMはMUBにPCMが埋め込まれていない場合だけ
+playback／export runtimeへpreloadする。`#voice`／`#pcm`はdefaultより優先し、相対pathはdocument directoryで
+解決する。未保存documentの相対resourceは拒否する。rhythm directoryは`CMucom::Init`からFMGENへ明示的に
+渡し、CLIの`-r`も同じ経路に移した。外部ROMは選択directoryから8 fileを事前検査し、`CMucom`へ明示pathを
+渡す。resource選択は計画どおりapplication実行中だけ保持する。
+
+AppKit editorへCompile & Play、Pause／Resume、Stop、Fast、x2／x4／x6／x8／x10 popup、15 Hz更新の
+progress／current／max／loop／driver／state／speed表示を追加した。Build／Playback menuとbuttonは同じ
+document actionへ接続し、local event monitorからF5／F12、Esc、Control-F1押下／解放も同じactionへ送る。
+Control-F1はkey-upとapplication非active化でx1へ戻る。編集中に本文が変化した場合はpending play intentを
+世代ごと無効化し、古いrevisionを再生しない。window close時は購読解除とactive再生停止を行う。
+
+`compile_service_test`へタグ優先、default resource、未保存相対path、不足ROM／rhythm一覧を追加し、
+`playback_session_test`でPCM非埋込MUBへのdefault PCM preloadを実再生した。
+`playback_coordinator_test`では編集相当のpending intent取消を追加した。Release buildと全21 CTestは成功した。
+外部ROM実data、GUIの実CoreAudio聴感、device選択／切断／再接続は4-3以降の受入に残す。
 
 ### Phase 4で追加する常設試験
 
@@ -1027,8 +1046,9 @@ Universal BinaryとIntel Macは標準版の完了条件にしない。
 7. Phase 9～10: 署名済み配布物と最終受入
 8. 拡張profile: 実chip、外部driver。標準版後または外部仕様・hardware確保後
 
-次に実装すべき対象はPhase 4の4-1であり、default PCM／voice、rhythm、外部ROMをprocess current directoryに
-依存しない明示pathで解決する。Windows golden生成、VM導入、Windows CLI比較は先行条件にしない。
+次に実装すべき対象はPhase 4の4-3であり、output device picker、hotplug、`DeviceLost`、明示Reconnect、
+requested／obtained format表示をAppKitへ接続する。Windows golden生成、VM導入、Windows CLI比較は
+先行条件にしない。
 
 ## 実施履歴
 
@@ -1051,3 +1071,4 @@ Universal BinaryとIntel Macは標準版の完了条件にしない。
 | 2026-09-25 | Phase 3 Dark Mode／行番号表示修正 | `LineNumberRulerView`の幅を46ptへ固定し、ruler背景がeditor全体を覆ってMUC本文を隠す問題を修正。editor／messageへ動的system colorを適用。行番号の位置と表示領域をAppKitでtext viewからrulerへ変換し、本文と同じ境界でclipしてglyph baselineへ整列 | Dark Mode実GUIで`sampl1.muc`本文、行番号、status、compile transcriptを表示。scrollbarの上端／中間／下端／端数位置と上端復帰時に追従し、上下端の部分行で本文と行番号のclipとbaselineが一致することを確認 |
 | 2026-09-25 | Phase 4計画具体化 | application単位Coordinator、stale compile抑止、transport／shortcut、resource解決、device hotplug／再接続、audio診断、click対策、Phase 5との次曲境界を確定 | 現行のPlaybackSession、AudioDeviceService、AppKit、CLI resource経路、Windows HSP操作、GUI受入仕様を照合。実装・試験は未着手 |
 | 2026-09-26 | Phase 4 4-0完了 | ResourceConfiguration、application共有PlaybackCoordinator、play intent世代、状態別command、refill／drop診断契約を実装 | `playback_coordinator_test`を追加。Release buildと全21 CTest成功。GUI接続、resource実読込、実deviceは未着手 |
+| 2026-09-27 | Phase 4 4-1／4-2完了 | default PCM／voice、rhythm、外部ROMを明示path化し、AppKitへcompile-and-play、transport、progress、速度、resource選択、F5／F12・Esc・Control-F1を接続 | タグ優先、未保存相対path、不足resource、PCM preload、pending intent取消を試験。Release buildと全21 CTest成功。device picker／hotplugは4-3へ継続 |

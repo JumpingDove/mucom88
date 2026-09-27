@@ -21,6 +21,15 @@ bool WaitForState(mucom88::PlaybackSession &playback,
     return playback.State() == expected;
 }
 
+void RemoveTag(std::string &text, const std::string &tag)
+{
+    const std::size_t begin = text.find("#" + tag);
+    if (begin == std::string::npos) return;
+    const std::size_t end = text.find('\n', begin);
+    text.erase(begin, end == std::string::npos ? text.size() - begin
+                                               : end - begin + 1);
+}
+
 } // namespace
 
 int main()
@@ -89,6 +98,32 @@ int main()
     playback.Stop();
     CHECK(test, WaitForState(playback, mucom88::PlaybackState::Idle,
         std::chrono::seconds(2)));
+
+    const auto samplePath = mucom88_test::PackagePath() / "sampl1.muc";
+    mucom88::CompileRequest defaultResources;
+    defaultResources.utf8_text = mucom88_test::ReadBinary(samplePath);
+    RemoveTag(defaultResources.utf8_text, "voice");
+    RemoveTag(defaultResources.utf8_text, "pcm");
+    defaultResources.source_path = samplePath.string();
+    defaultResources.resource_directory = samplePath.parent_path().string();
+    defaultResources.resources.document_directory =
+        samplePath.parent_path().string();
+    defaultResources.resources.default_voice_file =
+        (mucom88_test::PackagePath() / "voice.dat").string();
+    defaultResources.resources.default_pcm_file =
+        (mucom88_test::PackagePath() / "mucompcm.bin").string();
+    const auto defaultCompiled = compiler.Compile(defaultResources);
+    CHECK(test, defaultCompiled.Succeeded());
+    CHECK(test, defaultCompiled.song != nullptr);
+    if (defaultCompiled.song) {
+        CHECK(test, !defaultCompiled.song->has_embedded_pcm);
+        playback.Play(defaultCompiled.song);
+        CHECK(test, WaitForState(playback, mucom88::PlaybackState::Playing,
+            std::chrono::seconds(5)));
+        playback.Stop();
+        CHECK(test, WaitForState(playback, mucom88::PlaybackState::Idle,
+            std::chrono::seconds(2)));
+    }
     playback.ClearObserver();
 
     {
