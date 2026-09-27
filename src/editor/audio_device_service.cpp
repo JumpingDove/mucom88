@@ -17,6 +17,7 @@ namespace {
 constexpr std::size_t kRingFrames = 16384;
 constexpr int kChannels = 2;
 constexpr std::size_t kFadeFrames = 256;
+constexpr auto kWriteWait = std::chrono::milliseconds(250);
 
 std::string DeviceId(const char *name)
 {
@@ -407,7 +408,7 @@ std::size_t AudioDeviceService::WriteFrames(const int *samples,
 {
     if (samples == nullptr || frames == 0) return 0;
     std::unique_lock<std::mutex> lock(impl_->mutex);
-    impl_->condition.wait_for(lock, std::chrono::milliseconds(20), [this, &cancellation] {
+    impl_->condition.wait_for(lock, kWriteWait, [this, &cancellation] {
         return impl_->shuttingDown || impl_->deviceLost ||
             cancellation.IsCancellationRequested() ||
             impl_->ring.size() - impl_->queuedSamples >= 2;

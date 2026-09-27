@@ -727,8 +727,9 @@ diagnosticは通常1件だが、UIとservice contractは複数件を保持・選
 - [x] requested／obtained format差の変換または明確なerror
 - [x] 曲末尾の自動停止と次曲への遷移
 - [x] pause／resume／stop／再初期化の反復試験
-- [ ] 内蔵speakerでPCMを含む曲を60分以上再生する
-- [ ] tempo、音切れ、click、終了時noiseを聴感確認する
+- [x] 実CoreAudioの`System Default`でPCMを含む曲を60分以上再生する
+- [ ] 出力先が内蔵speakerであることを確認し、tempo、音切れ、click、終了時noiseを聴感確認する
+- [ ] 実物output deviceを切断／再接続し、`DeviceLost`と明示`Reconnect`を確認する
 - [x] underrun、dropped sample、再充填回数を診断表示する
 
 ### Phase 4の実装境界
@@ -877,7 +878,7 @@ user-facingなautomatic playerを先取りしない。
 | 4-3（完了） | device picker、hotplug、DeviceLost、Reconnect、format表示 | 切断時に無断切替せず、選択後に曲頭から再接続 |
 | 4-4（完了） | 診断表示、fade-in／out、曲末hook | 反復操作でhangせず、sample不連続試験が成功 |
 | 4-5（完了） | dummy／sanitizer回帰 | 全既存CTestとPhase 4追加試験がDebug／Release／sanitizerで成功 |
-| 4-6 | 実CoreAudio受入 | 内蔵speakerでPCM曲を60分以上再生し、既知の音切れ、click、tempo変動なし |
+| 4-6（一部完了） | 実CoreAudio受入 | `System Default`でPCM曲を60分以上連続再生済み。内蔵speakerの聴感と物理device切断は未完了 |
 
 **4-0完了日: 2026-09-26**
 
@@ -982,6 +983,30 @@ undefined behavior、thread race、timeout、hangは検出されなかった。b
 
 4-5はdummy／sanitizer回帰の完了であり、実CoreAudio deviceや聴感を検証したものではない。内蔵speakerでの
 60分PCM再生、click／音切れ／tempo、物理device切断は4-6の完了条件として残す。
+
+**4-6一部実施日: 2026-09-27**
+
+MacBook Air（Mac17,3、Apple M5、macOS 27.0 build 26A428）でRelease版`MUCOM88Editor.app`を起動し、
+`package/sampl1.muc`を実CoreAudioの`System Default`へ出力した。requested／obtainedはいずれも
+44.1 kHz、signed 16-bit、stereo、1024 framesである。
+
+最初の実機確認では`underruns=0`のまま`dropped_frames`が増加した。1024 frame／44.1 kHzのcallback周期は
+約23.2 msであるのに、ring buffer満杯時のproducer待機が20 ms固定だったため、callback直前にtimeoutし、
+512 frame単位のrender blockを破棄していた。`AudioDeviceService::WriteFrames`の待機上限を250 msへ変更し、
+cancel、device lost、shutdownでは従来どおりcondition variableで即時解除するようにした。
+
+修正後は60分間連続して`Playing`とloop進行を維持し、60分時点で`queued_frames=16384`、
+`underruns=0`、`dropped_frames=0`、`refill_events=0`、`rendered_frames=160259072`、loop 73を記録した。
+その後Stopを実行し、`Idle`、`queued_frames=0`、各異常診断値0、`rendered_frames=163442176`を確認した。
+
+常設回帰では100回のtransport stress後にも`underruns`と`dropped_frames`が0であることを追加検証した。
+また、dummy callbackが20 ms以内に必ず実行されるという時刻依存を除去し、最大2秒のdeadline内で実際の
+callback／underrunを待ってrefillを検証するようにした。Release、Debug、ASan／UBSan、TSanの各構成で
+全23 CTest、計92件が成功し、sanitizer報告はない。
+
+GUI状態、診断値、長時間継続、Stop後のdevice closeは確認済みである。一方、Computer Useは実音を聴取できず、
+物理deviceの抜き差しも実行できないため、PCMの聴感、tempo、音切れ、click、終了noise、内蔵speaker endpoint、
+実物device切断／再接続は手動受入として残す。したがって4-6およびPhase 4全体は一部完了とする。
 
 ### Phase 4で追加する常設試験
 
@@ -1109,8 +1134,9 @@ Universal BinaryとIntel Macは標準版の完了条件にしない。
 7. Phase 9～10: 署名済み配布物と最終受入
 8. 拡張profile: 実chip、外部driver。標準版後または外部仕様・hardware確保後
 
-次に実施すべき対象はPhase 4の4-6であり、このApple Silicon Macの実CoreAudio deviceを使ってPCM曲を
-60分以上再生し、診断値、click、音切れ、tempo、終了noise、物理device切断／再接続を受け入れる。
+次に実施すべき対象はPhase 4の4-6に残る手動受入である。macOSの出力先が内蔵speakerであることを確認して
+`sampl1.muc`のPCM、tempo、音切れ、click、終了noiseを聴感確認し、可能な外部output deviceを物理的に
+切断／再接続して`DeviceLost`と明示`Reconnect`を受け入れる。60分連続再生と診断値、Stop後の解放は完了済みである。
 Windows golden生成、VM導入、Windows CLI比較は先行条件にしない。
 
 ## 実施履歴
@@ -1138,3 +1164,4 @@ Windows golden生成、VM導入、Windows CLI比較は先行条件にしない�
 | 2026-09-27 | Phase 4 4-3完了 | device名基準のoutput選択、SDL hotplug、DeviceLost、明示Reconnect、requested／obtained format表示を実装 | SDL dummyでaudio event、切断時の非自動切替、選択後の曲頭再接続、新SessionIdを確認。Release buildと全21 CTest成功。実CoreAudio抜き差しは4-6へ継続 |
 | 2026-09-27 | Phase 4 4-4完了 | audio診断表示、256 frame fade-in／out、自然終了fade、Phase 5向け次曲hookを実装 | 100回のtransport／device再初期化、sample連続性、2曲遷移を追加試験。Release buildと全23 CTest成功。sanitizerは4-5、実CoreAudio聴感は4-6へ継続 |
 | 2026-09-27 | Phase 4 4-5完了 | Phase 4追加分を含むdummy audio／sanitizer回帰を実施し、sanitizer build directoryをignore対象化 | Release、Debug、ASan／UBSan、TSanの各構成で全23 CTest成功。memory／UB／data race／hang報告なし。実CoreAudio受入は4-6へ継続 |
+| 2026-09-27 | Phase 4 4-6一部完了 | 実CoreAudioの60分連続再生で20 ms待機が1024-frame callback周期より短くdropする問題を検出し、250 msのbackpressure待機へ修正 | `System Default`で60分、loop 73、rendered 160259072、underrun／drop／refill 0。Stop後Idle／queue 0。4構成の全23 CTest成功。内蔵speaker聴感と物理hotplugは手動受入へ継続 |

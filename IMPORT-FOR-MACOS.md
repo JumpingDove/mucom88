@@ -1715,3 +1715,55 @@ runtime／editor sourceの追加修正は行っていない。
 この結果はSDL dummyとoffline処理の自動回帰であり、実際のspeaker出力やCoreAudio hotplugを代替しない。
 次の4-6ではこのApple Silicon Macの内蔵speakerでPCM曲を60分以上再生し、GUI診断値、click、音切れ、tempo、
 終了noise、物理device切断／再接続を記録する。
+
+## 25. Phase 4実CoreAudio受入（4-6、一部完了）
+
+2026-09-27にMacBook Air（Mac17,3、Apple M5、macOS 27.0 build 26A428）でRelease版
+`MUCOM88Editor.app`を使用し、`package/sampl1.muc`を実CoreAudioへ出力した。Audio Outputは
+`System Default`、requested／obtained formatはいずれも44.1 kHz、signed 16-bit、stereo、
+1024 framesである。
+
+### 25.1 実機で検出したbackpressure不具合
+
+最初のrunでは`underruns=0`のまま`dropped_frames`が増加し、最終的に107008 framesへ達した。
+原因はring buffer満杯時の`AudioDeviceService::WriteFrames`が20 msで待機を打ち切る一方、実deviceの
+callback周期が1024 / 44100 = 約23.2 msだったことである。producerはcallbackが空きを作る直前にtimeoutし、
+PlaybackSessionが未書込みの512-frame render blockをdropとして計上していた。
+
+待機上限を250 msへ変更した。これはcallback周期の揺らぎを吸収するための上限であり、空きができれば
+condition variableで直ちに復帰する。cancel、device lost、shutdownでも同じ通知とpredicateにより即時解除されるため、
+停止応答を250 ms固定で遅延させる変更ではない。
+
+`playback_transport_stress_test`には各Play／Pause／Resume／Stop cycle後の`underruns == 0`と
+`dropped_frames == 0`を追加した。`audio_device_service_test`はdummy callbackが20 ms以内に必ず動くという
+時刻依存を除去し、最大2秒のdeadline内で実際のcallback／underrunを待ってからrefillを検証する。
+
+### 25.2 60分連続再生結果
+
+修正版appを再起動して`sampl1.muc`をCompile & Playし、実時間60分にわたり50秒間隔でAppKitの状態と
+audio diagnosticsを監視した。
+
+| 観測点 | state | loop | queued | underruns | dropped | refills | rendered |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 60分 | Playing | 73 | 16384 | 0 | 0 | 0 | 160259072 |
+| Stop後 | Idle | - | 0 | 0 | 0 | 0 | 163442176 |
+
+60分を通して`Playing`とloop進行は継続し、異常診断値は増加しなかった。監視終了後も再生を継続してから
+Stopを実行し、`Idle`への遷移、ring queueの解放、device非active化を確認した。
+
+修正後はRelease、Debug、ASan／UBSan、TSanを再buildし、各23件、計92件のCTestがすべて成功した。
+ASan／UBSanとTSanからmemory error、undefined behavior、data raceの報告はない。
+
+### 25.3 未完了の手動受入
+
+Computer Useで検証できるのはGUI状態、format、診断値、時間経過、transport操作までであり、実際の音を
+聴取することはできない。また`System Default`が内蔵speakerへ向いているかの判定と、外部deviceの物理的な
+抜き差しも自動化していない。次の項目は人間による手動受入として残す。
+
+- macOSの出力先を内蔵speakerへ固定し、PCMが聞こえることを確認する
+- 原曲と比べてtempo変動、音切れ、click、停止時noiseがないことを確認する
+- 外部output deviceを再生中に抜き、`DeviceLost`へ遷移して別deviceへ無断切替しないことを確認する
+- deviceを戻して明示`Reconnect`し、同じ曲が曲頭から再生されることを確認する
+
+したがって、実CoreAudioの60分連続動作と停止／解放は完了したが、4-6およびPhase 4全体の受入状態は
+「一部完了」である。手動項目の記録先は`tests/manual/macos-gui-acceptance.md`とする。

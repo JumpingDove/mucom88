@@ -45,6 +45,36 @@ tester=
 | sandbox bookmark | N/A | 現在のappはsandboxを採用していない。採用時だけ文書外resource directoryをbookmark化する |
 | Phase 4 shortcut | BLOCKED | F5／F12、Esc、Control-F1は再生・停止・早送りUIと同時にPhase 4で有効化する |
 
+### Phase 4実CoreAudio開発時確認（2026-09-27）
+
+これはrelease候補の最終受入記録ではなく、Phase 4 4-6の開発確認である。
+
+```text
+app=build/MUCOM88Editor.app (Release)
+macos_version=27.0
+macos_build=26A428
+machine_model=MacBook Air (Mac17,3)
+soc=Apple M5
+device=System Default
+requested_format=44100 Hz / signed 16-bit / 2 ch / 1024 frames
+obtained_format=44100 Hz / signed 16-bit / 2 ch / 1024 frames
+source=package/sampl1.muc
+test_date=2026-09-27
+```
+
+| 対象 | 結果 | 証跡 |
+|---|---|---|
+| 実CoreAudio 60分連続再生 | PASS | 60分時点でPlaying、loop 73、queued 16384、rendered 160259072、underruns 0、dropped 0、refills 0。UIとloop進行も継続 |
+| Stop／device close | PASS | Stop後にIdle、queued 0、underruns 0、dropped 0、refills 0、rendered 163442176 |
+| backpressure回帰 | PASS | 20 ms待機を250 msへ修正。transport 100回後のunderrun／drop 0を常設化し、Release／Debug／ASan+UBSan／TSanで各23/23 CTest成功 |
+| PCM、tempo、音切れ、click、終了noiseの聴感 | BLOCKED | GUI automationは実音を聴取できない。内蔵speakerを選んだ人間の聴取で判定する |
+| 実物device切断／再接続 | BLOCKED | 物理操作は未実施。外部output deviceで`DeviceLost`、無断切替なし、明示`Reconnect`による曲頭再開を確認する |
+
+初回の実機再生では1024 frame／44.1 kHzの約23.2 ms callback周期に対してring満杯時の待機が20 msしかなく、
+callback直前にproducerがtimeoutして`dropped_frames`が増加した。修正後の上記60分runではdropを再現しなかった。
+`System Default`が実際に内蔵speakerへ向いていたかはautomationから特定できないため、内蔵speaker受入は
+`PASS`に含めない。
+
 ## Editor・document
 
 | ID | Scope | 予定自動試験 | 手動操作と期待結果 |

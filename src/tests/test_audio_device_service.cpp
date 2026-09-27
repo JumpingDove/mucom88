@@ -47,7 +47,13 @@ int main()
     audio.RecordDroppedFrames(3);
     CHECK(test, audio.Diagnostics().dropped_frames == 3);
     audio.Start();
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const auto callbackDeadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (audio.Diagnostics().underruns == 0 &&
+           std::chrono::steady_clock::now() < callbackDeadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    CHECK(test, audio.Diagnostics().underruns > 0);
     audio.Pause();
 
     CHECK(test, audio.WriteFrames(samples.data(), 1) == 1);

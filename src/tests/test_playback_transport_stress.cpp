@@ -59,6 +59,10 @@ int main()
             std::chrono::seconds(2));
         CHECK(test, stopped);
         if (!stopped) break;
+        const auto snapshot = playback.LatestSnapshot();
+        CHECK(test, snapshot != nullptr);
+        CHECK(test, snapshot && snapshot->audio.underruns == 0);
+        CHECK(test, snapshot && snapshot->audio.dropped_frames == 0);
     }
     return test.ExitCode();
 }
