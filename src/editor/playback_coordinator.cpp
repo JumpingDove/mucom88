@@ -22,6 +22,9 @@ public:
     {
         std::vector<PlaybackCoordinatorObserver> callbacks;
         PlaybackCoordinatorSnapshot value;
+        NextSongProvider provider;
+        std::shared_ptr<const CompiledSong> finishedSong;
+        std::uint64_t finishedGeneration = 0;
         {
             std::lock_guard<std::mutex> lock(mutex);
             if (shuttingDown) return;
@@ -41,8 +44,33 @@ public:
                 snapshot.audio_device = event.snapshot->audio_device;
             value = snapshot;
             for (const auto &entry : observers) callbacks.push_back(entry.second);
+            if (event.state == PlaybackState::Finished && activeSong &&
+                nextSongProvider) {
+                provider = nextSongProvider;
+                finishedSong = activeSong;
+                finishedGeneration = generation;
+            }
         }
         for (const auto &callback : callbacks) callback(value);
+        if (!provider) return;
+
+        std::shared_ptr<const CompiledSong> nextSong;
+        try {
+            nextSong = provider(finishedSong);
+        } catch (...) {
+            return;
+        }
+        if (!nextSong) return;
+
+        std::lock_guard<std::mutex> lock(mutex);
+        if (shuttingDown || generation != finishedGeneration ||
+            activeSong != finishedSong || snapshot.state != PlaybackState::Finished)
+            return;
+        activeSong = nextSong;
+        snapshot.document_id = nextSong->document_id;
+        snapshot.revision = nextSong->revision;
+        snapshot.error = {};
+        playback->Play(nextSong, activeOptions);
     }
 
     std::shared_ptr<MucomCompileService> compiler;
@@ -54,6 +82,7 @@ public:
     OperationHandle compileOperation;
     std::shared_ptr<const CompiledSong> activeSong;
     PlaybackOptions activeOptions;
+    NextSongProvider nextSongProvider;
     std::string selectedAudioDeviceId = "default";
     std::string selectedAudioDeviceName = "System Default";
     std::uint64_t generation = 0;
@@ -171,6 +200,11 @@ OperationHandle PlaybackCoordinator::Stop()
 
 OperationHandle PlaybackCoordinator::SetSpeed(int multiplier)
 {
+    if (multiplier == 1 || multiplier == 2 || multiplier == 4 ||
+        multiplier == 6 || multiplier == 8 || multiplier == 10) {
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        impl_->activeOptions.speed = multiplier;
+    }
     return impl_->playback->SetSpeed(multiplier);
 }
 
@@ -248,6 +282,13 @@ OperationHandle PlaybackCoordinator::Reconnect()
     return impl_->playback->Play(std::move(song), std::move(options));
 }
 
+void PlaybackCoordinator::SetNextSongProvider(NextSongProvider provider)
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    if (impl_->shuttingDown) return;
+    impl_->nextSongProvider = std::move(provider);
+}
+
 void PlaybackCoordinator::CancelPendingPlay(DocumentId documentId)
 {
     OperationHandle compile;
@@ -295,8 +336,15 @@ void PlaybackCoordinator::Unsubscribe(PlaybackSubscriptionId subscription)
 
 PlaybackCoordinatorSnapshot PlaybackCoordinator::Snapshot() const
 {
+    const auto liveMonitor = impl_->playback->LatestSnapshot();
     std::lock_guard<std::mutex> lock(impl_->mutex);
-    return impl_->snapshot;
+    PlaybackCoordinatorSnapshot value = impl_->snapshot;
+    if (liveMonitor) {
+        value.monitor = liveMonitor;
+        if (liveMonitor->audio_device)
+            value.audio_device = liveMonitor->audio_device;
+    }
+    return value;
 }
 
 } // namespace mucom88

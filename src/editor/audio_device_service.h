@@ -2,6 +2,7 @@
 #define MUCOM88_EDITOR_AUDIO_DEVICE_SERVICE_H
 
 #include <cstddef>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -66,6 +67,7 @@ public:
     std::optional<AudioDeviceOpenResult> LastOpenResult() const;
     void Close();
     void Start();
+    bool FadeOutAndWait(std::chrono::milliseconds timeout);
     void Pause();
     void Flush();
     void MarkDeviceLost();

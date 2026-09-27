@@ -389,6 +389,7 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     NSPopUpButton *_devicePopup;
     NSButton *_reconnectButton;
     NSTextField *_audioFormatLabel;
+    NSTextField *_audioDiagnosticsLabel;
     LineNumberRulerView *_lineRuler;
     NSTimer *_recoveryTimer;
     NSTimer *_playbackTimer;
@@ -524,6 +525,14 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     [_audioFormatLabel setContentHuggingPriority:NSLayoutPriorityDefaultLow
         forOrientation:NSLayoutConstraintOrientationHorizontal];
 
+    _audioDiagnosticsLabel = [NSTextField labelWithString:
+        @"Audio diagnostics: queued 0 • underruns 0 • dropped 0 • refills 0 • rendered 0"];
+    _audioDiagnosticsLabel.lineBreakMode = NSLineBreakByTruncatingTail;
+    NSStackView *diagnosticsBar = [NSStackView stackViewWithViews:
+        @[_audioDiagnosticsLabel]];
+    diagnosticsBar.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+    diagnosticsBar.alignment = NSLayoutAttributeCenterY;
+
     NSScrollView *editorScroll = [[NSScrollView alloc] initWithFrame:NSZeroRect];
     editorScroll.hasVerticalScroller = YES;
     editorScroll.hasHorizontalScroller = YES;
@@ -573,7 +582,8 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     messageScroll.documentView = _messageView;
 
     NSStackView *layout = [NSStackView stackViewWithViews:
-        @[controlBar, deviceBar, playbackBar, editorScroll, messageScroll]];
+        @[controlBar, deviceBar, playbackBar, diagnosticsBar,
+          editorScroll, messageScroll]];
     layout.translatesAutoresizingMaskIntoConstraints = NO;
     layout.orientation = NSUserInterfaceLayoutOrientationVertical;
     layout.alignment = NSLayoutAttributeLeading;
@@ -587,6 +597,7 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
         [controlBar.widthAnchor constraintEqualToAnchor:layout.widthAnchor],
         [playbackBar.widthAnchor constraintEqualToAnchor:layout.widthAnchor],
         [deviceBar.widthAnchor constraintEqualToAnchor:layout.widthAnchor],
+        [diagnosticsBar.widthAnchor constraintEqualToAnchor:layout.widthAnchor],
         [_devicePopup.widthAnchor constraintGreaterThanOrEqualToConstant:220.0],
         [_playbackProgress.widthAnchor constraintGreaterThanOrEqualToConstant:180.0],
         [editorScroll.widthAnchor constraintEqualToAnchor:layout.widthAnchor],
@@ -978,6 +989,18 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     if (snapshot.error) detail = [NSString stringWithFormat:@" • %@",
         StringFromUtf8(snapshot.error.message)];
     const auto monitor = snapshot.monitor;
+    const mucom88::AudioDiagnostics diagnostics = monitor != nullptr
+        ? monitor->audio : mucom88::AudioDiagnostics{};
+    _audioDiagnosticsLabel.stringValue = [NSString stringWithFormat:
+        @"Audio diagnostics: queued %llu • underruns %llu • dropped %llu • refills %llu • rendered %llu%@",
+        static_cast<unsigned long long>(diagnostics.queued_frames),
+        static_cast<unsigned long long>(diagnostics.underruns),
+        static_cast<unsigned long long>(diagnostics.dropped_frames),
+        static_cast<unsigned long long>(diagnostics.refill_events),
+        static_cast<unsigned long long>(diagnostics.rendered_frames),
+        diagnostics.device_lost ? @" • device lost" :
+            (diagnostics.started ? @" • active" : @"")];
+    _audioDiagnosticsLabel.toolTip = _audioDiagnosticsLabel.stringValue;
     if (snapshot.audio_device) {
         _audioFormatLabel.stringValue = AudioFormatText(*snapshot.audio_device);
     } else {

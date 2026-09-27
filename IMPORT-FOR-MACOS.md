@@ -1593,5 +1593,73 @@ requested／obtained snapshotを確認する。`playback_coordinator_test`は切
 しないこと、明示Reconnect後に異なる`SessionId`でPlayingへ戻ることを確認する。
 
 この自動試験はSDL eventと状態機械を検証するもので、実CoreAudio deviceの物理的な抜き差し、同名device、
-内蔵speakerでの聴感を完了させるものではない。これらは4-6の手動受入に残す。次の実装対象は4-4のaudio診断表示、
-fade-in／fade-out、自然終了時のsample連続性、次曲hookである。
+内蔵speakerでの聴感を完了させるものではない。これらは4-6の手動受入に残す。audio診断表示、fade、次曲hookは
+続く4-4で実装した。
+
+## 23. Phase 4 audio診断、fade、曲末hook（4-4）
+
+2026-09-27にPhase 4の4-4を実装した。再生開始／resume、pause／stop／再初期化、自然終了の波形境界を
+明示的に処理し、editorからaudio bufferの状態を確認できるようにした。folder browserやplaylistは追加せず、
+Phase 5が利用できるplatform-neutralな次曲hookまでを実装範囲とした。
+
+### 23.1 audio diagnostics表示
+
+device／playback行の下に診断行を追加し、次を15 Hzの既存snapshot更新で表示する。
+
+- ringに残る`queued_frames`
+- callbackの`underruns`
+- rendererがringへ渡せなかった`dropped_frames`
+- 空buffer後に供給を再開した`refill_events`
+- runtimeが生成した`rendered_frames`
+- 出力中の`active`または`device lost`
+
+GUIは`MonitorSnapshot::audio`のimmutable copyだけを参照し、SDL audio callbackからAppKitを呼ばない。
+再生終了後も最後の診断値を確認できる。deviceを次にopenした時点で各counterは0へ戻る。
+
+### 23.2 click抑止
+
+`AudioFadeEnvelope`を追加し、stereoのframe位置を基準に整数演算の線形gainを適用する。fade長は44.1 kHzで
+256 frame、約5.8 msである。
+
+| 境界 | 処理 |
+|---|---|
+| 開始／resume | SDL callbackが最初の256 frameを0から等倍へfade-in |
+| pause／stop／別曲再初期化 | callbackが256 frameを等倍から0へfade-outし、playback workerだけが最大250 ms待機 |
+| 有限曲の自然終了 | 終了検出blockの末尾256 frameをfade-outしてから`Draining`へ遷移 |
+| device lost | callback完了を待たず直ちに`DeviceLost`へ遷移 |
+
+SDL callbackの要求frame数がfade長を超える場合、fade-out完了後の同じcallback内はzero fillする。これにより
+256 frame後に元の音量へ戻る波形を出さない。fade待機、pause、flush、closeはplayback workerで行うため、
+AppKit main threadはblockしない。自然終了がprefill量より短い曲も、蓄積済みframeを開始して排出してから
+`Finished`にする。
+
+### 23.3 次曲hook
+
+`PlaybackCoordinator::SetNextSongProvider`は終了した`CompiledSong`を受け取り、次の`CompiledSong`またはnullを
+返す任意hookである。未設定またはnullなら従来どおり`Finished`に留まる。次曲がある場合は選択device、format、
+現在速度を引き継ぎ、新しい`SessionId`で曲頭から再生する。hook実行中にStop、document close、別のPlayが
+発生した場合はplay-intent世代、active song、状態を再照合し、古い結果を再生しない。provider例外はplayback
+worker外へ伝播させない。
+
+現在の`MUCOM88Editor.app`はproviderを設定しないため、自動playlistとしては動作しない。folder選択、skip、
+playlist loop、Now PlayingはPhase 5でこのhookの上に実装する。
+
+### 23.4 buildと検証
+
+build手順は13章と同じである。
+
+```sh
+cmake -S src -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
+
+`audio_fade_test`はfade-in／outの端点、単調性、最大隣接sample差、128 frameずつに分割した処理、
+1024-frame callback内のfade後zero fillを検証する。`playback_transport_stress_test`はSDL dummy deviceで
+Play／Pause／Resume／Stopおよびaudio deviceのopen／closeを100回反復する。`playback_coordinator_test`は
+有限曲終了後にproviderが返したloop曲へ移り、documentとsessionが切り替わることを確認する。
+
+Apple Silicon、Release構成で`MUCOM88Editor.app`を含むbuildと全23件のCTestに成功した。これは波形処理、
+状態機械、hangしない反復操作の自動検証であり、実CoreAudio出力の聴感を保証しない。次は4-5でDebug、
+ASan／UBSan、TSanを含む全構成の回帰を行い、その後4-6で内蔵speakerの60分再生、click、音切れ、tempo、
+PCM、物理device切断を手動受入する。

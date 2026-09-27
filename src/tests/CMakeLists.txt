@@ -81,6 +81,17 @@ mucom88_set_test_properties(audio_device_service_test 30)
 set_tests_properties(audio_device_service_test PROPERTIES
     ENVIRONMENT "SDL_AUDIODRIVER=dummy")
 
+mucom88_add_test_executable(audio_fade_test test_audio_fade.cpp)
+add_test(NAME audio_fade_test COMMAND audio_fade_test)
+mucom88_set_test_properties(audio_fade_test 15)
+
+mucom88_add_test_executable(playback_transport_stress_test
+    test_playback_transport_stress.cpp)
+add_test(NAME playback_transport_stress_test COMMAND playback_transport_stress_test)
+mucom88_set_test_properties(playback_transport_stress_test 90)
+set_tests_properties(playback_transport_stress_test PROPERTIES
+    ENVIRONMENT "SDL_AUDIODRIVER=dummy")
+
 mucom88_add_test_executable(export_service_test test_export_service.cpp)
 add_test(NAME export_service_test COMMAND export_service_test)
 mucom88_set_test_properties(export_service_test 60)

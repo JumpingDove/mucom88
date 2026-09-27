@@ -1,4 +1,5 @@
 #include "editor/playback_session.h"
+#include "editor/audio_fade.h"
 
 #include "cmucom.h"
 
@@ -18,6 +19,8 @@ namespace {
 
 constexpr int kRenderFrames = 512;
 constexpr std::size_t kPrefillFrames = 2048;
+constexpr std::size_t kFadeFrames = 256;
+constexpr auto kFadeWait = std::chrono::milliseconds(250);
 
 bool IsSupportedSpeed(int speed)
 {
@@ -172,9 +175,19 @@ public:
             song->channel_loop_counts.end(), [](int count) { return count > 0; });
     }
 
-    void StopRuntime()
+    void FadeOutAudio()
     {
+        const AudioDiagnostics diagnostics = audio->Diagnostics();
+        if (startedAudio && diagnostics.open && !diagnostics.device_lost)
+            audio->FadeOutAndWait(kFadeWait);
         audio->Pause();
+        startedAudio = false;
+    }
+
+    void StopRuntime(bool fadeOut = false)
+    {
+        if (fadeOut) FadeOutAudio();
+        else audio->Pause();
         audio->Flush();
         if (runtime) runtime->Stop(1);
         runtime.reset();
@@ -190,7 +203,7 @@ public:
     {
         if (cancellation.IsCancellationRequested()) return;
         Publish(operationId, PlaybackState::Stopping);
-        StopRuntime();
+        StopRuntime(true);
         sessionId = nextSession;
         publishedSession->store(sessionId, std::memory_order_release);
         song = std::move(nextSong);
@@ -264,6 +277,14 @@ public:
         std::vector<int> samples(kRenderFrames * 2, 0);
         runtime->RenderAudio(samples.data(), kRenderFrames);
         audio->RecordRenderedFrames(kRenderFrames);
+        const bool naturalEnd = !SongHasLoop() && song->max_count > 0 &&
+            runtime->GetStatus(MUCOM_STATUS_INTCOUNT) >= song->max_count;
+        if (naturalEnd) {
+            AudioFadeEnvelope fade;
+            fade.Begin(AudioFadeDirection::Out, kFadeFrames);
+            fade.Apply(samples.data() + (kRenderFrames - kFadeFrames) * 2,
+                kFadeFrames, 2);
+        }
         std::size_t written = 0;
         while (written < kRenderFrames) {
             const std::size_t count = audio->WriteFrames(
@@ -276,13 +297,13 @@ public:
         }
         UpdateMonitor();
         const AudioDiagnostics diagnostics = audio->Diagnostics();
-        if (!startedAudio && diagnostics.queued_frames >= kPrefillFrames) {
+        if (!startedAudio && (diagnostics.queued_frames >= kPrefillFrames ||
+                (naturalEnd && diagnostics.queued_frames > 0))) {
             audio->Start();
             startedAudio = true;
             Publish(activeOperation, PlaybackState::Playing);
         }
-        if (!SongHasLoop() && song->max_count > 0 &&
-            runtime->GetStatus(MUCOM_STATUS_INTCOUNT) >= song->max_count) {
+        if (naturalEnd) {
             runtime->Stop();
             draining = true;
             Publish(activeOperation, PlaybackState::Draining);
@@ -397,10 +418,9 @@ OperationHandle PlaybackSession::Pause()
             if (cancellation.IsCancellationRequested() || !implementation->runtime ||
                 (implementation->state != PlaybackState::Playing &&
                  implementation->state != PlaybackState::Buffering)) return;
+            implementation->FadeOutAudio();
             implementation->runtime->Stop();
-            implementation->audio->Pause();
             implementation->audio->Flush();
-            implementation->startedAudio = false;
             implementation->Publish(id, PlaybackState::Paused);
         })) handle.Cancel();
     return handle;
@@ -429,7 +449,7 @@ OperationHandle PlaybackSession::Stop()
     if (!impl_->Post([implementation = impl_.get(), id, cancellation] {
             if (cancellation.IsCancellationRequested()) return;
             implementation->Publish(id, PlaybackState::Stopping);
-            implementation->StopRuntime();
+            implementation->StopRuntime(true);
             implementation->Publish(id, PlaybackState::Idle);
         })) handle.Cancel();
     return handle;

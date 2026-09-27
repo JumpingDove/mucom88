@@ -32,6 +32,8 @@ struct PlaybackCoordinatorSnapshot {
 
 using PlaybackCoordinatorObserver =
     std::function<void(PlaybackCoordinatorSnapshot)>;
+using NextSongProvider = std::function<std::shared_ptr<const CompiledSong>(
+    std::shared_ptr<const CompiledSong>)>;
 
 // Application-wide arbitration for compile-and-play requests and transport.
 // It is the sole PlaybackSession observer and fans state out to documents.
@@ -54,6 +56,9 @@ public:
     ServiceResult<std::vector<AudioDeviceDescriptor>> EnumerateAudioOutputs();
     ServiceError SelectAudioOutput(const std::string &deviceId);
     OperationHandle Reconnect();
+    // Optional Phase 5 integration point. Called after a finite song reaches
+    // Finished; returning null leaves the coordinator in Finished.
+    void SetNextSongProvider(NextSongProvider provider);
     void CancelPendingPlay(DocumentId documentId);
     void DocumentClosed(DocumentId documentId);
 

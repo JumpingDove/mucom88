@@ -1,4 +1,5 @@
 #include "editor/audio_device_service.h"
+#include "editor/audio_fade.h"
 
 #include <SDL.h>
 
@@ -15,6 +16,7 @@ namespace {
 
 constexpr std::size_t kRingFrames = 16384;
 constexpr int kChannels = 2;
+constexpr std::size_t kFadeFrames = 256;
 
 std::string DeviceId(const char *name)
 {
@@ -73,6 +75,12 @@ public:
             --queuedSamples;
         }
         if (underflow) ++underruns;
+        fade.Apply(output, samples / kChannels, kChannels);
+        if (fadeOutPending && !fade.Active()) {
+            fadeOutPending = false;
+            fadeOutComplete = true;
+            started = false;
+        }
         if (started && queuedSamples == 0) refillPending = true;
         condition.notify_all();
     }
@@ -97,6 +105,9 @@ public:
     bool shuttingDown = false;
     bool deviceLost = false;
     bool refillPending = false;
+    bool fadeOutPending = false;
+    bool fadeOutComplete = false;
+    AudioFadeEnvelope fade;
 };
 
 AudioDeviceService::AudioDeviceService() : impl_(new Impl()) {}
@@ -223,6 +234,9 @@ ServiceResult<AudioDeviceOpenResult> AudioDeviceService::Open(
         impl_->started = false;
         impl_->deviceLost = false;
         impl_->refillPending = false;
+        impl_->fadeOutPending = false;
+        impl_->fadeOutComplete = false;
+        impl_->fade.Reset();
         result.value = {*selected, format, impl_->format};
         impl_->lastOpen = result.value;
     }
@@ -297,6 +311,9 @@ void AudioDeviceService::Close()
         device = impl_->device;
         impl_->device = 0;
         impl_->started = false;
+        impl_->fadeOutPending = false;
+        impl_->fadeOutComplete = false;
+        impl_->fade.Reset();
     }
     impl_->condition.notify_all();
     if (device != 0) {
@@ -309,6 +326,9 @@ void AudioDeviceService::Close()
         impl_->writePosition = 0;
         impl_->queuedSamples = 0;
         impl_->deviceLost = false;
+        impl_->fadeOutPending = false;
+        impl_->fadeOutComplete = false;
+        impl_->fade.Reset();
     }
 }
 
@@ -319,9 +339,27 @@ void AudioDeviceService::Start()
         std::lock_guard<std::mutex> lock(impl_->mutex);
         if (impl_->device == 0 || impl_->deviceLost) return;
         impl_->started = true;
+        impl_->fadeOutPending = false;
+        impl_->fadeOutComplete = false;
+        impl_->fade.Begin(AudioFadeDirection::In, kFadeFrames);
         device = impl_->device;
     }
     SDL_PauseAudioDevice(device, 0);
+}
+
+bool AudioDeviceService::FadeOutAndWait(std::chrono::milliseconds timeout)
+{
+    std::unique_lock<std::mutex> lock(impl_->mutex);
+    if (impl_->device == 0 || !impl_->started || impl_->deviceLost ||
+        impl_->shuttingDown) return false;
+    impl_->fade.Begin(AudioFadeDirection::Out, kFadeFrames);
+    impl_->fadeOutPending = true;
+    impl_->fadeOutComplete = false;
+    const bool completed = impl_->condition.wait_for(lock, timeout, [this] {
+        return impl_->fadeOutComplete || impl_->deviceLost ||
+            impl_->shuttingDown || impl_->device == 0;
+    });
+    return completed && impl_->fadeOutComplete;
 }
 
 void AudioDeviceService::Pause()
@@ -330,6 +368,9 @@ void AudioDeviceService::Pause()
     {
         std::lock_guard<std::mutex> lock(impl_->mutex);
         impl_->started = false;
+        impl_->fadeOutPending = false;
+        impl_->fadeOutComplete = false;
+        impl_->fade.Reset();
         device = impl_->device;
     }
     if (device != 0) SDL_PauseAudioDevice(device, 1);
@@ -352,6 +393,9 @@ void AudioDeviceService::MarkDeviceLost()
         std::lock_guard<std::mutex> lock(impl_->mutex);
         impl_->deviceLost = true;
         impl_->started = false;
+        impl_->fadeOutPending = false;
+        impl_->fadeOutComplete = false;
+        impl_->fade.Reset();
         device = impl_->device;
     }
     if (device != 0) SDL_PauseAudioDevice(device, 1);

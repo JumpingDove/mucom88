@@ -37,6 +37,17 @@ mucom88::CompileRequest Request(const char *sample,
     return request;
 }
 
+mucom88::CompileRequest TextRequest(const std::string &text,
+    mucom88::DocumentId document, mucom88::Revision revision)
+{
+    mucom88::CompileRequest request;
+    request.utf8_text = text;
+    request.resource_directory = mucom88_test::PackagePath().string();
+    request.document_id = document;
+    request.revision = revision;
+    return request;
+}
+
 } // namespace
 
 int main()
@@ -86,6 +97,11 @@ int main()
         std::chrono::seconds(5)));
     CHECK(test, coordinator.Snapshot().document_id == 200);
     CHECK(test, coordinator.Snapshot().revision == 2);
+    const int initialCoordinatorCount =
+        coordinator.Snapshot().monitor->absolute_interrupt_count;
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    CHECK(test, coordinator.Snapshot().monitor->absolute_interrupt_count >
+        initialCoordinatorCount);
 
     coordinator.Unsubscribe(firstSubscription);
     const int firstBeforePause = firstObserverCalls.load();
@@ -143,5 +159,38 @@ int main()
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     CHECK(test, playback->State() == mucom88::PlaybackState::Idle);
     CHECK(test, coordinator.Snapshot().document_id == 0);
+
+    auto queueCompiler = std::make_shared<mucom88::MucomCompileService>();
+    auto queuePlayback = std::make_shared<mucom88::PlaybackSession>();
+    mucom88::PlaybackCoordinator queueCoordinator(queueCompiler, queuePlayback);
+    const auto queuedSong = queueCompiler->Compile(TextRequest(
+        "#title Phase 4 queued loop\nA C96 t190 @3 o4 v10 L l16 c\n",
+        502, 2));
+    CHECK(test, queuedSong.Succeeded());
+    std::atomic<int> nextSongRequests{0};
+    queueCoordinator.SetNextSongProvider(
+        [&](std::shared_ptr<const mucom88::CompiledSong> finished) {
+            CHECK(test, finished != nullptr);
+            CHECK(test, finished && finished->document_id == 501);
+            ++nextSongRequests;
+            return queuedSong.song;
+        });
+    queueCoordinator.CompileAndPlay(TextRequest(
+        "#title Phase 4 finite\nA C96 t190 @3 o4 v10 l16 c\n",
+        501, 1));
+    const auto firstQueuedSessionDeadline = std::chrono::steady_clock::now() +
+        std::chrono::seconds(8);
+    while (std::chrono::steady_clock::now() < firstQueuedSessionDeadline &&
+        !(queueCoordinator.Snapshot().document_id == 502 &&
+          queueCoordinator.Snapshot().state == mucom88::PlaybackState::Playing)) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    CHECK(test, nextSongRequests.load() == 1);
+    CHECK(test, queueCoordinator.Snapshot().document_id == 502);
+    CHECK(test, queueCoordinator.Snapshot().state == mucom88::PlaybackState::Playing);
+    queueCoordinator.SetNextSongProvider({});
+    queueCoordinator.Stop();
+    CHECK(test, WaitForState(queueCoordinator, mucom88::PlaybackState::Idle,
+        std::chrono::seconds(2)));
     return test.ExitCode();
 }
