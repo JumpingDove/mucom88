@@ -87,9 +87,11 @@ protected:
 	int volume;
 	int mask;
 
-	static uint enveloptable[16][64];
-	static uint noisetable[noisetablesize];
-	static int EmitTable[32];
+	// The volume-derived tables are mutable. Per-instance storage keeps the
+	// compiler, player and offline exporter from racing through FMGEN globals.
+	uint enveloptable[16][64]{};
+	uint noisetable[noisetablesize]{};
+	int EmitTable[32]{};
 };
 
 #endif // PSG_H

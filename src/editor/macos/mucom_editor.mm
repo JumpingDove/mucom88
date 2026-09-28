@@ -1,4 +1,5 @@
 #import <AppKit/AppKit.h>
+#import "editor/macos/phase5_windows.h"
 
 #include <algorithm>
 #include <atomic>
@@ -392,8 +393,7 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     NSTextField *_audioDiagnosticsLabel;
     LineNumberRulerView *_lineRuler;
     NSTimer *_recoveryTimer;
-    NSTimer *_playbackTimer;
-    mucom88::PlaybackSubscriptionId _playbackSubscription;
+    id _presentationObserver;
     std::uint64_t _audioDeviceGeneration;
     NSInteger _fastForwardMultiplier;
     BOOL _fastForwarding;
@@ -417,6 +417,8 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
 - (IBAction)changeAudioDevice:(id)sender;
 - (IBAction)reconnectAudioDevice:(id)sender;
 - (void)updatePlaybackUI;
+- (void)updatePlaybackUIWithSnapshot:
+    (const mucom88::PlaybackCoordinatorSnapshot &)snapshot;
 - (void)refreshAudioDevices:(BOOL)force;
 - (mucom88::CompileRequest)configuredCompileRequest;
 - (IBAction)goToLine:(id)sender;
@@ -613,22 +615,17 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     [self updateStatus];
     [self refreshAudioDevices:YES];
     __weak MucomDocument *weakSelf = self;
-    _playbackSubscription = _services->playback_coordinator->Subscribe(
-        [weakSelf](mucom88::PlaybackCoordinatorSnapshot snapshot) {
-            (void)snapshot;
+    _presentationObserver = [NSNotificationCenter.defaultCenter
+        addObserverForName:MucomPlaybackPresentationDidUpdateNotification
+        object:nil queue:NSOperationQueue.mainQueue
+        usingBlock:^(NSNotification *notification) {
             MucomDocument *document = weakSelf;
             if (document != nil) {
                 [document refreshAudioDevices:NO];
-                [document updatePlaybackUI];
-            }
-        });
-    _playbackTimer = [NSTimer scheduledTimerWithTimeInterval:(1.0 / 15.0)
-        repeats:YES block:^(NSTimer *timer) {
-            (void)timer;
-            MucomDocument *document = weakSelf;
-            if (document != nil) {
-                [document refreshAudioDevices:NO];
-                [document updatePlaybackUI];
+                MucomPlaybackPresentationUpdate *update =
+                    (MucomPlaybackPresentationUpdate *)notification.object;
+                [document updatePlaybackUIWithSnapshot:
+                    [update playbackSnapshot]];
             }
         }];
     [self updatePlaybackUI];
@@ -975,6 +972,13 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
 {
     if (_playbackLabel == nil || _services == nullptr) return;
     const auto snapshot = _services->playback_coordinator->Snapshot();
+    [self updatePlaybackUIWithSnapshot:snapshot];
+}
+
+- (void)updatePlaybackUIWithSnapshot:
+    (const mucom88::PlaybackCoordinatorSnapshot &)snapshot
+{
+    if (_playbackLabel == nil || _services == nullptr) return;
     const auto document = _model->Snapshot();
     NSString *selectedDevice = StringFromUtf8(snapshot.selected_audio_device_id);
     for (NSMenuItem *item in _devicePopup.itemArray) {
@@ -1095,7 +1099,8 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
                 if (!result.diagnostics.empty())
                     [document selectLine:result.diagnostics.front().line];
             }
-        });
+        }, mucom88::PlaybackOwner::Editor(
+            _model->Snapshot().document_id));
 }
 
 - (IBAction)pauseResumePlayback:(id)sender
@@ -1338,10 +1343,9 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
 - (void)close
 {
     [_recoveryTimer invalidate];
-    [_playbackTimer invalidate];
-    if (_playbackSubscription != 0 && _services != nullptr) {
-        _services->playback_coordinator->Unsubscribe(_playbackSubscription);
-        _playbackSubscription = 0;
+    if (_presentationObserver != nil) {
+        [NSNotificationCenter.defaultCenter removeObserver:_presentationObserver];
+        _presentationObserver = nil;
     }
     if (_services != nullptr) _services->playback_coordinator->DocumentClosed(
         _model->Snapshot().document_id);
@@ -1357,9 +1361,8 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
 - (void)dealloc
 {
     [_recoveryTimer invalidate];
-    [_playbackTimer invalidate];
-    if (_playbackSubscription != 0 && _services != nullptr)
-        _services->playback_coordinator->Unsubscribe(_playbackSubscription);
+    if (_presentationObserver != nil)
+        [NSNotificationCenter.defaultCenter removeObserver:_presentationObserver];
     _compileOperation.Cancel();
 }
 
@@ -1369,7 +1372,10 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     std::shared_ptr<mucom88::ApplicationServices> _services;
     id _eventMonitor;
     NSTimer *_audioDeviceEventTimer;
+    MucomPlaybackPresentationController *_presentationController;
     BOOL _controlF1Held;
+    MucomHomeWindowController *_homeController;
+    MucomPlayerWindowController *_playerController;
 }
 @end
 
@@ -1494,11 +1500,34 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     [mainMenu addItem:windowItem];
     NSMenu *windowMenu = [[NSMenu alloc] initWithTitle:@"Window"];
     windowItem.submenu = windowMenu;
+    AddMenuItem(windowMenu, @"MUCOM88 Home",
+        @selector(showHomeWindow:), @"").target = self;
+    AddMenuItem(windowMenu, @"Player / Sound Monitor",
+        @selector(showPlayerWindow:), @"").target = self;
+    [windowMenu addItem:NSMenuItem.separatorItem];
     AddMenuItem(windowMenu, @"Minimize", @selector(performMiniaturize:), @"m");
     AddMenuItem(windowMenu, @"Zoom", @selector(performZoom:), @"");
     [windowMenu addItem:NSMenuItem.separatorItem];
     AddMenuItem(windowMenu, @"Bring All to Front", @selector(arrangeInFront:), @"");
     NSApp.windowsMenu = windowMenu;
+}
+
+- (IBAction)showHomeWindow:(id)sender
+{
+    if (_homeController == nil)
+        _homeController = [[MucomHomeWindowController alloc]
+            initWithServices:_services];
+    [_homeController showWindow:sender];
+    [_homeController.window makeKeyAndOrderFront:sender];
+}
+
+- (IBAction)showPlayerWindow:(id)sender
+{
+    if (_playerController == nil)
+        _playerController = [[MucomPlayerWindowController alloc]
+            initWithServices:_services];
+    [_playerController showWindow:sender];
+    [_playerController.window makeKeyAndOrderFront:sender];
 }
 
 - (void)applicationWillFinishLaunching:(NSNotification *)notification
@@ -1510,6 +1539,9 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     _services = std::make_shared<mucom88::ApplicationServices>(
         std::move(mainDispatcher));
     mucom88::InstallApplicationServices(_services);
+    _presentationController = [[MucomPlaybackPresentationController alloc]
+        initWithServices:_services];
+    [_presentationController start];
     [self installMainMenu];
     __weak MucomAppDelegate *weakSelf = self;
     _eventMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:
@@ -1615,6 +1647,8 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
         _eventMonitor = nil;
     }
     [_audioDeviceEventTimer invalidate];
+    [_presentationController stop];
+    _presentationController = nil;
     mucom88::InstallApplicationServices(nullptr);
     _services.reset();
 }

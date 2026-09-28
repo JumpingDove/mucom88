@@ -6,8 +6,10 @@
 #include <SDL.h>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <mutex>
+#include <thread>
 
 #include "../osdep.h"
 #include "audiobuffer.h"
@@ -70,10 +72,13 @@ private:
     bool AudioOpenFlag;
     bool AudioDeviceStarted;
     SDL_AudioDeviceID AudioDevice;
-    SDL_TimerID TimerId;
     Uint32 InitializedSubsystems;
     std::atomic<bool> ShuttingDown;
     mutable std::mutex AudioStateMutex;
+    std::mutex TimerMutex;
+    std::condition_variable TimerCondition;
+    std::thread TimerThread;
+    bool TimerStopRequested;
     std::chrono::steady_clock::time_point StartTime;
 };
 

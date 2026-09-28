@@ -15,6 +15,42 @@ namespace mucom88 {
 
 using PlaybackSubscriptionId = std::uint64_t;
 
+enum class PlaybackOwnerKind {
+    None,
+    Editor,
+    Browser,
+    Playlist
+};
+
+struct PlaybackOwner {
+    PlaybackOwnerKind kind = PlaybackOwnerKind::None;
+    std::uint64_t token = 0;
+
+    static PlaybackOwner Editor(std::uint64_t value)
+    { return {PlaybackOwnerKind::Editor, value}; }
+    static PlaybackOwner Browser(std::uint64_t value)
+    { return {PlaybackOwnerKind::Browser, value}; }
+    static PlaybackOwner Playlist(std::uint64_t value)
+    { return {PlaybackOwnerKind::Playlist, value}; }
+
+    bool operator==(const PlaybackOwner &other) const
+    { return kind == other.kind && token == other.token; }
+    bool operator!=(const PlaybackOwner &other) const { return !(*this == other); }
+    explicit operator bool() const
+    { return kind != PlaybackOwnerKind::None && token != 0; }
+};
+
+std::uint64_t NextPlaybackOwnerToken();
+
+struct NowPlayingInfo {
+    PlaybackOwner owner;
+    DocumentId document_id = 0;
+    Revision revision = 0;
+    std::string source_path;
+    std::string content_id;
+    SongMetadata metadata;
+};
+
 struct PlaybackCoordinatorSnapshot {
     DocumentId document_id = 0;
     Revision revision = 0;
@@ -28,6 +64,8 @@ struct PlaybackCoordinatorSnapshot {
     bool selected_audio_device_available = true;
     bool reconnect_available = false;
     std::optional<AudioDeviceOpenResult> audio_device;
+    PlaybackOwner owner;
+    std::optional<NowPlayingInfo> now_playing;
 };
 
 using PlaybackCoordinatorObserver =
@@ -47,7 +85,10 @@ public:
     PlaybackCoordinator &operator=(const PlaybackCoordinator &) = delete;
 
     OperationHandle CompileAndPlay(CompileRequest request,
-        PlaybackOptions options = {}, CompileCompletion completion = {});
+        PlaybackOptions options = {}, CompileCompletion completion = {},
+        PlaybackOwner owner = {});
+    OperationHandle PlayCompiledSong(std::shared_ptr<const CompiledSong> song,
+        PlaybackOptions options = {}, PlaybackOwner owner = {});
     OperationHandle Pause();
     OperationHandle Resume();
     OperationHandle TogglePauseResume();

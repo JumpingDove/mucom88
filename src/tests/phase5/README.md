@@ -1,13 +1,14 @@
 # Phase 5 pre-implementation contract tests
 
-This directory contains executable specifications for Phase 5. The tests are
-registered in CTest before the production services exist. Each executable
-returns CTest's skip code (`77`) while its target production header is absent;
-as soon as that header is added, the contract body is compiled and executed.
+This directory contains executable specifications for Phase 5. They were
+registered before the production services existed. All activating production
+headers are now present, so the five contract bodies are compiled and executed
+in every normal and sanitizer build. The `77` fallback remains only so the
+specifications can describe an older or partially applied source tree.
 
 This arrangement keeps the existing regression suite green without weakening
 the Phase 5 requirements or leaving non-compiling tests in the normal build.
-A Phase 5 stage is not complete while its corresponding contract test is still
+A Phase 5 stage is not complete if its corresponding contract test fails or is
 reported as skipped.
 
 ## Activation map

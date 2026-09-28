@@ -61,6 +61,8 @@ add_library(mucom88_runtime STATIC
     editor/serial_executor.cpp
     editor/application_services.cpp
     editor/document_service.cpp
+    editor/song_metadata.cpp
+    editor/library_service.cpp
     editor/editor_command.cpp
     editor/editor_line_model.cpp
     editor/recovery_service.cpp
@@ -68,6 +70,8 @@ add_library(mucom88_runtime STATIC
     editor/audio_device_service.cpp
     editor/playback_session.cpp
     editor/playback_coordinator.cpp
+    editor/playback_presentation.cpp
+    editor/playlist_service.cpp
     editor/export_service.cpp
     editor/voice_service.cpp
     plugin/plugin.cpp
@@ -119,6 +123,7 @@ if(APPLE AND MUCOM88_BUILD_MACOS_EDITOR)
 
     add_executable(mucom88_editor MACOSX_BUNDLE
         editor/macos/mucom_editor.mm
+        editor/macos/phase5_windows.mm
     )
     target_compile_options(mucom88_editor PRIVATE -fobjc-arc)
     target_link_libraries(mucom88_editor PRIVATE

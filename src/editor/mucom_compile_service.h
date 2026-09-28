@@ -11,6 +11,7 @@
 
 #include "editor/service_types.h"
 #include "editor/resource_configuration.h"
+#include "editor/song_metadata.h"
 
 namespace mucom88 {
 
@@ -50,6 +51,7 @@ struct CompiledSong {
     DocumentId document_id = 0;
     Revision revision = 0;
     std::string content_id;
+    SongMetadata metadata;
 };
 
 struct CompileRequest {

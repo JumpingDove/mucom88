@@ -18,12 +18,17 @@ ApplicationServices::ApplicationServices(CompletionDispatcher dispatcher)
     playback = std::make_shared<PlaybackSession>(audio, dispatcher);
     playback_coordinator =
         std::make_shared<PlaybackCoordinator>(compiler, playback);
+    library = std::make_shared<LibraryService>(dispatcher);
+    playlist = std::make_shared<PlaylistService>(
+        library, compiler, playback_coordinator);
     exporter = std::make_shared<ExportService>(dispatcher);
     voices = std::make_shared<VoiceService>();
 }
 
 ApplicationServices::~ApplicationServices()
 {
+    playlist.reset();
+    library.reset();
     playback_coordinator.reset();
     if (playback) {
         playback->ClearObserver();

@@ -107,7 +107,9 @@ namespace FM
 		Channel4* csmch;
 
 
-		static  uint32 lfotable[8];
+		// LFO timing depends on this instance's clock/rate. A shared table races
+		// when compile-ahead initializes a second runtime during playback.
+		uint32 lfotable[8]{};
 
 	private:
 		void	TimerA();

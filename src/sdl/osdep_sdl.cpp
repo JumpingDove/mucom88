@@ -28,13 +28,6 @@ void SdlAudioCallback(void *param, Uint8 *data, int length)
     instance->AudioMain(reinterpret_cast<short *>(data), length / 4);
 }
 
-Uint32 SdlTimerCallback(Uint32 interval, void *param)
-{
-    auto *instance = static_cast<OsDependentSdl *>(param);
-    instance->UpdateTimer();
-    return interval;
-}
-
 } // namespace
 
 OsDependentSdl::OsDependentSdl()
@@ -43,9 +36,9 @@ OsDependentSdl::OsDependentSdl()
       AudioOpenFlag(false),
       AudioDeviceStarted(false),
       AudioDevice(0),
-      TimerId(0),
       InitializedSubsystems(0),
       ShuttingDown(false),
+      TimerStopRequested(false),
       StartTime(std::chrono::steady_clock::now())
 {
     UserTimerCallback = new TimerCallback;
@@ -234,12 +227,30 @@ void OsDependentSdl::OutputRealChipAdpcm(void *, int) {}
 
 bool OsDependentSdl::InitTimer()
 {
-    if (TimerId != 0) return true;
+    std::lock_guard<std::mutex> timerLock(TimerMutex);
+    if (TimerThread.joinable()) return true;
     if (!InitSubsystem(SDL_INIT_TIMER)) return false;
     Time->ResetTick();
-    TimerId = SDL_AddTimer(TIMER_INTERVAL, SdlTimerCallback, this);
-    if (TimerId == 0) {
-        std::fprintf(stderr, "SDL timer initialization failed: %s\n", SDL_GetError());
+    TimerStopRequested = false;
+    try {
+        TimerThread = std::thread([this] {
+            std::unique_lock<std::mutex> lock(TimerMutex);
+            auto next = std::chrono::steady_clock::now() +
+                std::chrono::milliseconds(TIMER_INTERVAL);
+            while (!TimerStopRequested) {
+                if (TimerCondition.wait_until(lock, next,
+                        [this] { return TimerStopRequested; })) break;
+                lock.unlock();
+                UpdateTimer();
+                lock.lock();
+                next += std::chrono::milliseconds(TIMER_INTERVAL);
+                const auto now = std::chrono::steady_clock::now();
+                if (next <= now)
+                    next = now + std::chrono::milliseconds(TIMER_INTERVAL);
+            }
+        });
+    } catch (...) {
+        TimerStopRequested = true;
         QuitSubsystem(SDL_INIT_TIMER);
         return false;
     }
@@ -248,10 +259,16 @@ bool OsDependentSdl::InitTimer()
 
 void OsDependentSdl::FreeTimer()
 {
-    if (TimerId != 0) {
-        SDL_RemoveTimer(TimerId);
-        TimerId = 0;
+    std::thread timer;
+    {
+        std::lock_guard<std::mutex> timerLock(TimerMutex);
+        if (TimerThread.joinable()) {
+            TimerStopRequested = true;
+            TimerCondition.notify_all();
+            timer = std::move(TimerThread);
+        }
     }
+    if (timer.joinable()) timer.join();
     QuitSubsystem(SDL_INIT_TIMER);
 }
 

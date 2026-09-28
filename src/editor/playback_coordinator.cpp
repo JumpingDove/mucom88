@@ -2,11 +2,37 @@
 
 #include <map>
 #include <algorithm>
+#include <atomic>
 #include <mutex>
 #include <utility>
 #include <vector>
 
 namespace mucom88 {
+namespace {
+
+std::atomic<std::uint64_t> nextPlaybackOwner{1};
+
+NowPlayingInfo MakeNowPlaying(
+    const std::shared_ptr<const CompiledSong> &song, PlaybackOwner owner)
+{
+    NowPlayingInfo value;
+    value.owner = owner;
+    if (song) {
+        value.document_id = song->document_id;
+        value.revision = song->revision;
+        value.source_path = song->source_path;
+        value.content_id = song->content_id;
+        value.metadata = song->metadata;
+    }
+    return value;
+}
+
+} // namespace
+
+std::uint64_t NextPlaybackOwnerToken()
+{
+    return nextPlaybackOwner.fetch_add(1, std::memory_order_relaxed);
+}
 
 class PlaybackCoordinator::Impl {
 public:
@@ -35,6 +61,10 @@ public:
                 snapshot.document_id = event.document_id;
                 snapshot.revision = event.revision;
             }
+            snapshot.owner = activeOwner;
+            snapshot.now_playing = activeSong
+                ? std::optional<NowPlayingInfo>(MakeNowPlaying(activeSong, activeOwner))
+                : std::nullopt;
             snapshot.state = event.state;
             snapshot.error = event.error;
             snapshot.monitor = event.snapshot;
@@ -70,6 +100,7 @@ public:
         snapshot.document_id = nextSong->document_id;
         snapshot.revision = nextSong->revision;
         snapshot.error = {};
+        snapshot.now_playing = MakeNowPlaying(nextSong, activeOwner);
         playback->Play(nextSong, activeOptions);
     }
 
@@ -83,6 +114,7 @@ public:
     std::shared_ptr<const CompiledSong> activeSong;
     PlaybackOptions activeOptions;
     NextSongProvider nextSongProvider;
+    PlaybackOwner activeOwner;
     std::string selectedAudioDeviceId = "default";
     std::string selectedAudioDeviceName = "System Default";
     std::uint64_t generation = 0;
@@ -116,7 +148,7 @@ PlaybackCoordinator::~PlaybackCoordinator()
 }
 
 OperationHandle PlaybackCoordinator::CompileAndPlay(CompileRequest request,
-    PlaybackOptions options, CompileCompletion completion)
+    PlaybackOptions options, CompileCompletion completion, PlaybackOwner owner)
 {
     std::shared_ptr<Impl> implementation = impl_;
     OperationHandle previous;
@@ -131,6 +163,10 @@ OperationHandle PlaybackCoordinator::CompileAndPlay(CompileRequest request,
         implementation->snapshot.revision = request.revision;
         implementation->snapshot.play_intent_generation = generation;
         implementation->snapshot.error = {};
+        implementation->activeSong.reset();
+        implementation->activeOwner = owner;
+        implementation->snapshot.owner = owner;
+        implementation->snapshot.now_playing.reset();
     }
     previous.Cancel();
     implementation->playback->Stop();
@@ -153,6 +189,9 @@ OperationHandle PlaybackCoordinator::CompileAndPlay(CompileRequest request,
                 if (shouldPlay) {
                     current->pendingDocument = 0;
                     current->activeSong = result.song;
+                    current->snapshot.owner = current->activeOwner;
+                    current->snapshot.now_playing =
+                        MakeNowPlaying(result.song, current->activeOwner);
                     current->activeOptions = options;
                     current->playback->Play(result.song, options);
                 }
@@ -169,6 +208,33 @@ OperationHandle PlaybackCoordinator::CompileAndPlay(CompileRequest request,
         }
     }
     return operation;
+}
+
+OperationHandle PlaybackCoordinator::PlayCompiledSong(
+    std::shared_ptr<const CompiledSong> song, PlaybackOptions options,
+    PlaybackOwner owner)
+{
+    if (!song || song->mub_bytes.empty()) return {};
+    OperationHandle previous;
+    {
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        if (impl_->shuttingDown) return {};
+        previous = impl_->compileOperation;
+        ++impl_->generation;
+        impl_->pendingDocument = 0;
+        impl_->activeSong = song;
+        impl_->activeOwner = owner;
+        options.audio_device_id = impl_->selectedAudioDeviceId;
+        impl_->activeOptions = options;
+        impl_->snapshot.document_id = song->document_id;
+        impl_->snapshot.revision = song->revision;
+        impl_->snapshot.play_intent_generation = impl_->generation;
+        impl_->snapshot.owner = owner;
+        impl_->snapshot.now_playing = MakeNowPlaying(song, owner);
+        impl_->snapshot.error = {};
+    }
+    previous.Cancel();
+    return impl_->playback->Play(std::move(song), std::move(options));
 }
 
 OperationHandle PlaybackCoordinator::Pause() { return impl_->playback->Pause(); }
@@ -190,8 +256,11 @@ OperationHandle PlaybackCoordinator::Stop()
         impl_->snapshot.play_intent_generation = impl_->generation;
         impl_->pendingDocument = 0;
         impl_->activeSong.reset();
+        impl_->activeOwner = {};
         impl_->snapshot.document_id = 0;
         impl_->snapshot.revision = 0;
+        impl_->snapshot.owner = {};
+        impl_->snapshot.now_playing.reset();
         compile = impl_->compileOperation;
     }
     compile.Cancel();

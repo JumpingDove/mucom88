@@ -103,9 +103,9 @@ mucom88_set_test_properties(app_service_lifetime_test 30)
 set_tests_properties(app_service_lifetime_test PROPERTIES
     ENVIRONMENT "SDL_AUDIODRIVER=dummy")
 
-# Phase 5 executable specifications are registered before their production
-# headers exist. Each target returns 77 until its activating header is added;
-# CTest reports that state as skipped rather than weakening the existing suite.
+# Phase 5 executable specifications remain able to return 77 in a source tree
+# where a production header is absent. In the current tree all activating
+# headers exist, so every contract body is compiled and must run without skips.
 function(mucom88_add_phase5_contract_test target source timeout)
     mucom88_add_test_executable(${target} ${source})
     add_test(NAME ${target} COMMAND ${target})

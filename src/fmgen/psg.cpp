@@ -352,10 +352,3 @@ void PSG::Mix(Sample* dest, int nsamples)
 		}
 	}
 }
-
-// ---------------------------------------------------------------------------
-//	テーブル
-//
-uint	PSG::noisetable[noisetablesize] = { 0, };
-int		PSG::EmitTable[0x20] = { -1, };
-uint	PSG::enveloptable[16][64] = { {0}, };

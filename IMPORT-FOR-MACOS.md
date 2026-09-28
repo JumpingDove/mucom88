@@ -1897,8 +1897,8 @@ MUB保存、playlist中のeditor Play、monitor 20回開閉を確認する。実
 `underruns=0`、`dropped_frames=0`を必要とする。詳細な手順と記録欄は
 `tests/manual/macos-gui-acceptance.md`に定義した。
 
-Phase 5の設計は完了したが、production serviceとAppKit UIの実装はまだ行っていない。実装前contract testは
-次節のとおり先行して追加した。
+Phase 5の設計後、production serviceとAppKit UIを実装した。実装前に追加したcontract testと、その有効化後の
+検証結果を次節以降に記録する。
 
 ### 26.7 実装前contract test（2026-09-28）
 
@@ -1914,14 +1914,45 @@ integration／lifetime 8の計64ケースを`src/tests/phase5/README.md`へ抽�
 | `phase5_presentation_contract_test` | `editor/playback_presentation.h` | 5-4 |
 | `phase5_integration_contract_test` | 上記4 headerすべて | 5-5 |
 
-production headerがまだ存在しない現在は各testが終了code 77を返し、CTestの`SKIP_RETURN_CODE`でSkippedと表示する。
-これは未実装機能をPASS扱いにする仕組みではなく、通常のbuildをcompile不能にせず実装前の期待をrepositoryへ
-固定するための段階である。対象headerが追加されると`__has_include` guardが外れ、同じtargetでcontract本体が
-compileされる。APIが契約と違えばcompile error、動作が違えばtest failureになる。
+実装前はproduction headerが存在しないため各testが終了code 77を返していた。現在は4 headerが追加されて
+`__has_include` guardが外れ、5件すべてのcontract本体がcompile／実行される。77 fallbackは部分適用tree向けに
+残しているが、現行treeではSkipを許容しない。
 
-Release、Debug、ASan／UBSan、TSanの全構成で`MUCOM88Editor.app`を含むbuildに成功した。各構成のCTestは
-28件中、既存23件が成功し、Phase 5 contract 5件が予定どおりSkippedであり、sanitizer報告はない。Phase 5の
-各実装段階は対応contractがactiveになって成功するまで完了扱いにしない。最終5-5では5件すべてについて
-4構成でskip 0を要求する。
+### 26.8 Phase 5実装結果（2026-09-29）
 
-この追加はtest source、CTest登録、test計画だけであり、Phase 5 production serviceやAppKit UIはまだ実装していない。
+次のplatform-neutral serviceを追加した。
+
+- `SongMetadata`／`MetadataService`: MUC／N88 tag抽出、UTF-8 validation、16 MiB preview上限、file stem fallback
+- `LibraryService`: 1階層の非同期scan、directory／MUC／N88の安定sort、hidden除外、entry単位error、stale世代破棄
+- `PlaybackCoordinator`拡張: Editor／Browser／Playlist owner、`NowPlayingInfo`、compile済み曲の`PlayCompiledSong`
+- `PlaylistService`: immutable MUC queue、1曲先読み、compile失敗skip、loop、Next／Previous／Stop、90秒／150% policy、
+  別ownerによる停止、provider解除を含むshutdown
+- `PlaybackPresentation`: A～Kの11 channel表示値、note／pan／address整形、Idle／Preparing clear、15 Hz throttle contract
+
+`ApplicationServices`がLibrary／Playlistをapplication単位で所有し、終了時はPlaylistとproviderをCoordinatorより先に
+停止する。`CompiledSong`へmetadataを保持するため、editor、Home direct play、playlistの全経路で同じNow Playingを
+表示できる。
+
+AppKitには`phase5_windows.h/.mm`を追加し、Window menuから次を表示できるようにした。
+
+- Home: Choose Folder、Back、Refresh、MUC／N88一覧、metadata inspector、Open in Editor、Play、Export MUB、
+  Start Playlist
+- Player / Sound Monitor: Now Playing、Pause／Resume、Previous／Next／Stop、loop／時間／比率policy、playlist状態、
+  A～K channel table、interrupt／loop／speed／audio診断
+
+`MucomPlaybackPresentationController`をAppDelegateが1個所有し、1本の15 Hz timerでCoordinator snapshotを1回だけ
+取得して全editorとPlayerへimmutable notificationとして配る。従来のdocumentごとの`_playbackTimer`とPlayer固有timerは
+廃止した。Coordinator observerによる状態変化はmain queueへ即時配送し、audio callbackやplayback workerはAppKitを
+呼ばない。
+
+compile-aheadにより複数のMUCOM compilerが同時に動くため、FMGENのPSG emit／envelope／noise tableとOPN LFO tableを
+static共有からinstance所有へ変更した。これによりTSanで検出したcompile worker間のdata raceを除去した。また
+HomebrewのSDL2-compatで`SDL_AddTimer`のuserdataが反復停止時にnullになるクラッシュをTSanで再現したため、通常runtimeの
+10 ms timerを`std::thread`／condition variableへ置き換え、`FreeTimer()`でstop後にjoinしてからsubsystemを解放する。
+audio device callbackは従来どおり`SDL_OpenAudioDevice`系を使用する。
+
+Release、Debug、ASan／UBSan、TSanの4構成で`MUCOM88Editor.app`を含むbuildに成功し、各構成の全28 CTestが成功した。
+Phase 5 contract 5件はすべてactive、Skip 0である。TSanの`sdl_audio_lifecycle_test`はさらに5回反復して全回成功した。
+これで5-0～5-4と自動回帰gateは完了した。5-5の実CoreAudio GUI受入（folder 1周、compile error skip、loop、
+90秒／150%、direct play、MUB保存、owner競合、monitor反復開閉とdrop 0）は未実施であり、手順は
+`tests/manual/macos-gui-acceptance.md`を使用する。

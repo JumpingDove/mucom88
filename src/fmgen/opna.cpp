@@ -39,8 +39,6 @@ namespace FM
 
 #if defined(BUILD_OPN) || defined(BUILD_OPNA) || defined (BUILD_OPNB)
 
-uint32	OPNBase::lfotable[8];			// OPNA/B 用
-
 OPNBase::OPNBase()
 {
 	prescale = 0;

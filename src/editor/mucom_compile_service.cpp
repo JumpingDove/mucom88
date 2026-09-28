@@ -358,6 +358,10 @@ public:
         song->document_id = request.document_id;
         song->revision = request.revision;
         song->content_id = ContentId(song->mub_bytes);
+        MetadataService metadata;
+        const auto parsed = metadata.ParseUtf8(
+            request.utf8_text, request.source_path);
+        if (parsed.Succeeded()) song->metadata = parsed.value;
         result.song = std::move(song);
         return result;
     }

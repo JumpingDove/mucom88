@@ -162,28 +162,28 @@ CTest、release受入試験からは呼び出さない。
 - [ ] `GUI-PLAY-05` x2、x4、x6、x8、x10の早送り倍率
 - [x] `GUI-PLAY-06` slow再生設定を対象外と決定する
 - [ ] `GUI-PLAY-07` 再生位置と最大countのprogress表示
-- [ ] `GUI-PLAY-08` 再生中のsound monitor表示
+- [-] `GUI-PLAY-08` 再生中のsound monitor表示
 - [ ] `GUI-PLAY-09` MUCOM88 1.7、1.5、EMの選択結果表示
 - [ ] `GUI-PLAY-10` document相対およびdefault PCM／voice読込
 - [ ] `GUI-PLAY-11` YM2608 rhythm WAV directory指定と再生
 
 ### Home・file browser・player
 
-- [ ] `GUI-HOME-01` folder移動とMUC／N88一覧
-- [ ] `GUI-HOME-02` title、author、composer、date、voice、PCM、comment preview
-- [ ] `GUI-HOME-03` 選択fileをeditorで開く
-- [ ] `GUI-HOME-04` editorを開かずcompile・再生
-- [ ] `GUI-HOME-05` MUB export
-- [ ] `GUI-HOME-06` app内playlist／automatic player
-- [ ] `GUI-PLAYER-01` folder内MUCの連続再生とcompile失敗skip
-- [ ] `GUI-PLAYER-02` Now Playing、tag、channel詳細
-- [ ] `GUI-PLAYER-03` 最大時間・曲長割合による自動skip
+- [-] `GUI-HOME-01` folder移動とMUC／N88一覧
+- [-] `GUI-HOME-02` title、author、composer、date、voice、PCM、comment preview
+- [-] `GUI-HOME-03` 選択fileをeditorで開く
+- [-] `GUI-HOME-04` editorを開かずcompile・再生
+- [-] `GUI-HOME-05` MUB export
+- [-] `GUI-HOME-06` app内playlist／automatic player
+- [-] `GUI-PLAYER-01` folder内MUCの連続再生とcompile失敗skip
+- [-] `GUI-PLAYER-02` Now Playing、tag、channel詳細
+- [-] `GUI-PLAYER-03` 最大時間・曲長割合による自動skip
 - [x] `GUI-PLAYER-04` 未配布3D visualizerを対象外と決定する
 
 ### Sound monitor
 
-- [ ] `GUI-MON-01` A～Kのvoice、volume、detune、address、key、LFO、reverb、pan、quantize表示
-- [ ] `GUI-MON-02` interrupt count、current count、最大値表示
+- [-] `GUI-MON-01` A～Kのvoice、volume、detune、address、key、LFO、reverb、pan、quantize表示
+- [-] `GUI-MON-02` interrupt count、current count、最大値表示
 
 Windows GUIでchannel mute値は表示のみであり操作機能は確認できないため、mute操作は追加要件にしない。
 
@@ -1032,15 +1032,15 @@ PCM欠落がない。
 ## Phase 5: Home、player、monitor
 
 - [x] 実装前contract test 64ケースの抽出とCTest登録
-- [ ] folder sidebarとMUC／N88一覧
-- [ ] 選択fileのmetadata inspector
-- [ ] editorで開く、直接再生、MUB export
-- [ ] playlist、連続再生、compile失敗skip、loop
-- [ ] 最大演奏時間・曲長割合による自動skip
-- [ ] Now Playingと曲切替表示
-- [ ] 11 channelのmonitor view
-- [ ] monitor更新頻度を制限し、audio threadをblockしない
-- [ ] document、browser、playlist間で同じactive playback状態を共有する
+- [x] folder sidebarとMUC／N88一覧
+- [x] 選択fileのmetadata inspector
+- [x] editorで開く、直接再生、MUB export
+- [x] playlist、連続再生、compile失敗skip、loop
+- [x] 最大演奏時間・曲長割合による自動skip
+- [x] Now Playingと曲切替表示
+- [x] 11 channelのmonitor view
+- [x] monitor更新頻度を制限し、audio threadをblockしない
+- [x] document、browser、playlist間で同じactive playback状態を共有する
 
 ### Phase 5の対象とWindows機能対応
 
@@ -1272,14 +1272,31 @@ metadata 10、library 12、playlist 12、policy 10、presentation 12、integrati
 - `phase5_presentation_contract_test`
 - `phase5_integration_contract_test`
 
-production headerが存在しない実装前段階では各executableが77を返し、CTestは`Skipped`として表示する。
-既存testを無効化したり未実装をPASS扱いにはしない。対応する`editor/song_metadata.h`、
-`editor/library_service.h`、`editor/playlist_service.h`、`editor/playback_presentation.h`が追加されると
-preprocessor guardが外れてcontract本体がcompile／実行される。Phase 5の各段階は対応contractがskipのままでは
-完了にできず、5-5では5件すべてがactiveかつ4 build構成で成功することを要求する。
+実装前は各executableが77を返して`Skipped`になっていたが、production header追加後はguardが外れ、5件すべての
+contract本体がcompile／実行される。77 fallbackは部分適用されたsource tree向けに残すが、現行treeの合格条件は
+skip 0である。
 
-導入直後にRelease、Debug、ASan／UBSan、TSanの4構成を再buildし、各構成で既存23件が成功、Phase 5の5件だけが
-予定どおりSkippedとなった。通常build、CLI、`MUCOM88Editor.app`のlinkとad-hoc署名を維持し、sanitizer報告もない。
+**Phase 5 production実装日: 2026-09-29**
+
+- `SongMetadata`／`MetadataService`と非同期`LibraryService`を追加し、encoding、16 MiB上限、entry単位error、
+  generationによるstale scan破棄を実装した
+- `PlaybackOwner`／`NowPlayingInfo`／`PlayCompiledSong`をCoordinatorへ追加し、Editor、Browser、Playlistの再生所有権を
+  application内の単一sessionへ統合した
+- application共有`PlaylistService`へimmutable queue、1曲先読み、compile失敗skip、loop、Next／Previous／Stop、
+  90秒／150% policy、別owner割込み、shutdown順序を実装した
+- Home windowへfolder選択／Back／Refresh、MUC／N88一覧、metadata inspector、Open、direct Play、MUB export、
+  Start Playlistを接続した
+- Player / Sound MonitorへNow Playing、playlist、transport／policy、A～Kの11 channel、audio診断を接続した
+- application共有`MucomPlaybackPresentationController`の1本の15 Hz timerがCoordinator snapshotを1回取得し、
+  editorとPlayerへimmutable updateをfan-outする構成へ変更した
+- compile-aheadの並列実行で共有されていたFMGENのPSG／LFO可変tableをinstance所有へ変更した
+- SDL2-compat timer callbackが反復終了時にnull userdataで落ちる事象をTSanで検出し、通常runtimeのtimerを
+  stop／join可能な内部threadへ変更した
+
+Release、Debug、ASan／UBSan、TSanの各構成で`MUCOM88Editor.app`を含むbuildに成功し、全28 CTestが成功した。
+Phase 5 contract 5件はすべてactiveでSkipは0、sanitizer報告もない。TSanのSDL audio lifecycle試験は追加で5回反復し、
+全回成功した。5-0～5-4のproduction実装と自動回帰gateは完了した。5-5の実CoreAudio GUI手動受入だけは未実施であり、
+上位の機能一覧では該当項目を`[-]`のまま保持する。
 
 完了条件: `GUI-PLAY-08`、`GUI-HOME-01`～`06`、`GUI-MON-01`～`02`、`GUI-PLAYER-01`～`03`の
 12項目について自動試験とmacOS GUI手動受入が揃い、editor、direct play、automatic playerの競合時もactive
@@ -1379,10 +1396,10 @@ Universal BinaryとIntel Macは標準版の完了条件にしない。
 7. Phase 9～10: 署名済み配布物と最終受入
 8. 拡張profile: 実chip、外部driver。標準版後または外部仕様・hardware確保後
 
-次のsoftware実装対象はPhase 5の5-0である。`SongMetadata`、library値型、PlaybackOwner、Now Playing contractを
-先に追加し、tag／encoding／stale scan／owner切替の単体試験を固定してからHome UIへ進む。Phase 4の4-6に残る
-内蔵speaker聴感と物理device切断／再接続はrelease受入として並行管理し、Phase 5 source実装の先行条件にはしない。
-Windows golden生成、VM導入、Windows CLI比較は先行条件にしない。
+次の作業はPhase 5の5-5実CoreAudio GUI受入である。folder 1周、compile error skip、末尾loop、90秒／150% skip、
+dirty editorからのopen、direct play、MUB保存、playlist中のeditor Play、monitor反復開閉を実機で確認する。
+その完了後にPhase 6のTool／exportへ進む。Phase 4の4-6に残る内蔵speaker聴感と物理device切断／再接続も
+release受入として並行管理する。Windows golden生成、VM導入、Windows CLI比較は先行条件にしない。
 
 ## 実施履歴
 
@@ -1412,3 +1429,4 @@ Windows golden生成、VM導入、Windows CLI比較は先行条件にしない�
 | 2026-09-27 | Phase 4 4-6一部完了 | 実CoreAudioの60分連続再生で20 ms待機が1024-frame callback周期より短くdropする問題を検出し、250 msのbackpressure待機へ修正 | `System Default`で60分、loop 73、rendered 160259072、underrun／drop／refill 0。Stop後Idle／queue 0。4構成の全23 CTest成功。内蔵speaker聴感と物理hotplugは手動受入へ継続 |
 | 2026-09-27 | Phase 5計画具体化 | metadata／library値型、playback owner、compile-ahead playlist、時間／比率policy、Home／Player／11 channel monitor、単一15 Hz presentation経路を確定 | Windows `mucom88win.hsp`／`aplayer.hsp`、既存Document／Compile／Playback／Export service、Phase 4次曲hookを照合。実装は未着手 |
 | 2026-09-28 | Phase 5実装前test完了 | metadata、library、playlist、policy、presentation、integration／lifetimeの64ケースを抽出し、5 executable contractをCTestへ常設登録 | Release／Debug／ASan+UBSan／TSanで既存23件成功、Phase 5の5件は対応header未実装のため予定どおりSkipped。header追加時にcontract本体が自動有効化され、skip残存を各段階の未完了条件とする |
+| 2026-09-29 | Phase 5 5-0～5-4／自動回帰完了 | metadata／library、owner／Now Playing、Home、direct play／MUB export、compile-ahead playlist／policy、Player／11 channel monitor、application共有15 Hz presentationを実装。FMGEN可変tableをinstance化し、SDL timerをstop／join可能なthreadへ変更 | Release／Debug／ASan+UBSan／TSanで全28 CTest成功。Phase 5 contract 5件はactive、skip 0。TSan SDL lifecycleを追加5反復。実CoreAudio GUI受入は5-5へ継続 |
