@@ -100,7 +100,7 @@ callback直前にproducerがtimeoutして`dropped_frames`が増加した。修�
 | `GUI-PLAY-05` | standard | `playback_session_test`: x2～x10 | 各倍率とprogress進行率が一致する |
 | `GUI-PLAY-06` | excluded | なし | `N/A`。Windows sourceでも未使用のslow設定をrelease noteへ記載する |
 | `GUI-PLAY-07` | standard | `playback_session_test`: progress | 再生、停止、曲切替で現在値と最大値が正しい |
-| `GUI-PLAY-08` | standard | `monitor_snapshot_test`: 購読 | 再生中にmonitorを開閉しても音切れしない |
+| `GUI-PLAY-08` | standard | `playback_presentation_test`: 15 Hz fan-outと購読解除 | 再生中にmonitorを20回開閉してもUI、音声、診断値が乱れない |
 | `GUI-PLAY-09` | standard | `compile_service_test`: driver選択 | MUCOM88 1.7／1.5／EMの使用中driverを確認できる |
 | `GUI-PLAY-10` | standard | `resource_resolution_test`: PCM／voice | 異なる起動directoryでもdocument相対resourceを再生できる |
 | `GUI-PLAY-11` | standard | `rhythm_resource_test`: 合成6 WAV | 指定したrhythm channelが非無音になる |
@@ -112,23 +112,45 @@ callback直前にproducerがtimeoutして`dropped_frames`が増加した。修�
 
 | ID | Scope | 予定自動試験 | 手動操作と期待結果 |
 |---|---|---|---|
-| `GUI-HOME-01` | standard | `browser_service_test`: 列挙とsort | folderを選びMUC／N88だけを一覧する |
-| `GUI-HOME-02` | standard | `metadata_service_test`: tag | 選択曲のtitle、author、composer、date、voice、PCM、commentを表示する |
-| `GUI-HOME-03` | standard | `browser_action_test`: open | 未保存確認後に選択fileをeditorで開く |
-| `GUI-HOME-04` | standard | `browser_action_test`: direct play | editorを開かず選択MUCをcompile・再生する |
-| `GUI-HOME-05` | standard | `browser_action_test`: MUB export | save panelの指定先へMUBを出力する |
+| `GUI-HOME-01` | standard | `library_service_test`: 非同期列挙、filter、安定sort、世代 | folderを選び、子folderとMUC／N88だけを一覧し、移動／Back／Refreshできる |
+| `GUI-HOME-02` | standard | `metadata_service_test`: 4 encodingとtag規則 | 選択曲のtitle、author、composer、date、voice、PCM、commentをcompileせず表示する |
+| `GUI-HOME-03` | standard | `library_action_test`: document open契約 | dirty editorを破棄せず、選択fileを新規または既存editor windowで開く |
+| `GUI-HOME-04` | standard | `library_action_test`: Browser ownerとresource | editorを作らず選択MUCをcompile・再生し、active playbackをapplicationで共有する |
+| `GUI-HOME-05` | standard | `library_action_test`: MUB atomic export／cancel | save panelの指定先へMUBを出力し、失敗／cancel時にpartial fileを残さない |
 | `GUI-HOME-06` | standard | `playlist_service_test`: playlist生成 | main editorと競合せずautomatic playerを開始する |
 
 ## Sound monitor・player
 
 | ID | Scope | 予定自動試験 | 手動操作と期待結果 |
 |---|---|---|---|
-| `GUI-MON-01` | standard | `monitor_snapshot_test`: A～K mapping | 11 channelのvoice、volume、detune、address、key、LFO、reverb、pan、quantizeを表示する |
-| `GUI-MON-02` | standard | `monitor_snapshot_test`: count | interrupt、current、maximum countが曲進行と同期する |
-| `GUI-PLAYER-01` | standard | `playlist_service_test`: skip／loop | 失敗曲をskipして連続再生し末尾から先頭へ戻る |
-| `GUI-PLAYER-02` | standard | `playlist_service_test`: 表示snapshot | Now Playing、tag、channel詳細が選択曲と一致する |
-| `GUI-PLAYER-03` | standard | `playlist_service_test`: 時間／割合 | 指定条件で次曲へ進み無効値を拒否する |
+| `GUI-MON-01` | standard | `monitor_snapshot_test`: A～K mappingと表示model | 11 channelのvoice、volume、detune、address、key／key-on、LFO、reverb、pan、quantizeを表示する |
+| `GUI-MON-02` | standard | `monitor_snapshot_test`: count／SessionId | absolute interrupt、current、maximum、loop countが曲進行とsession切替に同期する |
+| `GUI-PLAYER-01` | standard | `playlist_service_test`: skip／全失敗／末尾loop | compile失敗曲をskipして連続再生し、末尾から先頭へ戻り、全失敗時は停止理由を表示する |
+| `GUI-PLAYER-02` | standard | `playlist_service_test`: owner／Now Playing snapshot | Now Playing、tag、channel詳細、選択行がactive曲と一致し、editor Play時はqueueが安全に終了する |
+| `GUI-PLAYER-03` | standard | `playlist_policy_test`: fake clockとcount比率 | 90秒／150%の先着条件、Pause除外、0無効、無効値拒否を確認する |
 | `GUI-PLAYER-04` | excluded | なし | `N/A`。未配布3D visualizerの除外理由をrelease noteへ記載する |
+
+### Phase 5手動受入手順
+
+Phase 5実装時は、少なくとも次のfixture folderを一時directoryへ用意する。
+
+- tagが揃ったUTF-8 MUC、tagなしMUC、CP932 MUC、N88を各1件
+- file名の大文字／小文字と`.MUC`を含むsort確認用file
+- compile成功する有限曲とloop曲、意図的なcompile error曲
+- PCMを使う`sampl1.muc`と必要な相対resource
+
+1. Homeでfixture folderを選び、directory先行、MUC／N88 filter、安定sort、Back／Refreshを確認する。
+2. 各fileを選び、metadataとencoding errorが他entryへ波及しないことを確認する。
+3. dirtyなeditorを残したまま別fileをOpen in Editorし、編集内容が失われないことを確認する。
+4. Playでeditor windowが増えず、editor／Home／PlayerのtransportとNow Playingが同じsessionを示すことを確認する。
+5. Export MUBで保存先を選び、成功fileをmacOS版で再読込する。cancel時はdestinationと一時fileが残らないことを確認する。
+6. success、compile error、loopの順を含むplaylistを開始し、error skip、末尾loop、Next／Previous、Stopを確認する。
+7. 90秒条件と150%条件を個別に短い試験値へ変更し、先に達した条件で次曲へ進むこと、Pause中は時間が進まないことを確認する。
+8. monitorを20回開閉し、A～K、count、Now Playingがactive sessionと一致し、診断値のunderrun／dropが増えないことを確認する。
+9. playlist再生中にeditorからCompile & Playし、playlistだけがcancelされeditor曲が継続することを確認する。
+
+記録にはfolder内file数、再生順、skipしたfileとerror、policy値、使用device、monitor開閉回数、
+`underruns`、`dropped_frames`、`refill_events`を残す。3D visualizerは実施せず`GUI-PLAYER-04=N/A`とする。
 
 ## Tool・export
 

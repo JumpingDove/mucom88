@@ -103,6 +103,29 @@ mucom88_set_test_properties(app_service_lifetime_test 30)
 set_tests_properties(app_service_lifetime_test PROPERTIES
     ENVIRONMENT "SDL_AUDIODRIVER=dummy")
 
+# Phase 5 executable specifications are registered before their production
+# headers exist. Each target returns 77 until its activating header is added;
+# CTest reports that state as skipped rather than weakening the existing suite.
+function(mucom88_add_phase5_contract_test target source timeout)
+    mucom88_add_test_executable(${target} ${source})
+    add_test(NAME ${target} COMMAND ${target})
+    mucom88_set_test_properties(${target} ${timeout})
+    set_tests_properties(${target} PROPERTIES
+        SKIP_RETURN_CODE 77
+        ENVIRONMENT "SDL_AUDIODRIVER=dummy")
+endfunction()
+
+mucom88_add_phase5_contract_test(phase5_metadata_contract_test
+    test_phase5_metadata_contract.cpp 30)
+mucom88_add_phase5_contract_test(phase5_library_contract_test
+    test_phase5_library_contract.cpp 30)
+mucom88_add_phase5_contract_test(phase5_playlist_policy_contract_test
+    test_phase5_playlist_policy_contract.cpp 60)
+mucom88_add_phase5_contract_test(phase5_presentation_contract_test
+    test_phase5_presentation_contract.cpp 30)
+mucom88_add_phase5_contract_test(phase5_integration_contract_test
+    test_phase5_integration_contract.cpp 90)
+
 mucom88_add_test_executable(mub_validation_test test_mub.cpp)
 add_test(NAME mub_validation_test COMMAND mub_validation_test)
 mucom88_set_test_properties(mub_validation_test 15)

@@ -1031,6 +1031,7 @@ PCM欠落がない。
 
 ## Phase 5: Home、player、monitor
 
+- [x] 実装前contract test 64ケースの抽出とCTest登録
 - [ ] folder sidebarとMUC／N88一覧
 - [ ] 選択fileのmetadata inspector
 - [ ] editorで開く、直接再生、MUB export
@@ -1040,6 +1041,250 @@ PCM欠落がない。
 - [ ] 11 channelのmonitor view
 - [ ] monitor更新頻度を制限し、audio threadをblockしない
 - [ ] document、browser、playlist間で同じactive playback状態を共有する
+
+### Phase 5の対象とWindows機能対応
+
+Phase 5は`mucom88win.hsp`のHome／SMONと`aplayer.hsp`のautomatic playerをmacOS native UIへ移す。
+Windowsと同じ座標、別process構成、HSP描画を再現するのではなく、次の利用目的を同等化する。
+
+- 現在folderの子folderと`.muc`／`.n88`を選択、sort、再読込できる
+- compileせずにtitle、author、composer、date、voice、PCM、commentを確認できる
+- 選択曲をeditorで開く、直接再生する、MUBとして保存する
+- folder内のMUCを順番に再生し、compile失敗をskipして末尾から先頭へ戻る
+- 最大実時間またはmax count比率でloop曲を次へ進める
+- activeな1曲についてNow PlayingとA～Kの11 channel状態を表示する
+- editor、Home、player、monitorのどこから操作してもapplication内のactive playbackは1つである
+
+`vplayer.hsp`の3D visualizerは既に`GUI-PLAYER-04`として標準版対象外である。再帰的library index、検索、
+tag編集、MUB／WAV／VGM／S98の汎用export、設定永続化、filesystem監視もPhase 5へ混在させない。
+MUB保存はHomeの単一用途だけを接続し、汎用export UIはPhase 6、folderやplayer設定の永続化はPhase 8で行う。
+
+### metadataとlibraryの値型
+
+runtimeの`CMucom::GetInfoBufferByName`やAppKit型をbrowserへ露出しない。次のplatform-neutralな値型を追加する。
+
+```text
+SongMetadata
+  title, author, composer, date, voice, pcm, comment
+
+LibraryEntry
+  entry_id, absolute_path, display_name, DocumentKind
+  is_directory, metadata, file_error
+
+LibrarySnapshot
+  scan_generation, root_directory, current_directory
+  parent_available, directories[], songs[], scanning, error
+```
+
+`SongMetadata`は`CompiledSong`にも保持し、editor、direct play、playlistのどの経路でも同じNow Playing表示を
+作れるようにする。表示用titleだけは空の場合にfile stemへfallbackし、modelへ`NO TITLE`という疑似tagを
+書き込まない。
+
+`MetadataService`は`DocumentService`のUTF-8／BOM／CP932／Shift_JIS decodeとMUC／N88判定を再利用し、
+compileやprocess current directory変更を行わずtagを抽出する。tag規則は現runtimeに合わせる。
+
+- 行頭が`#`の行だけを対象にし、ASCII小文字の`title`、`author`、`composer`、`date`、`voice`、`pcm`、
+  `comment`を認識する
+- tag名の後の空白を除いた残りを値とし、同名tagが複数ある場合はruntime同様に最初の値を採用する
+- 未知tagは無視し、tag欠落はerrorにしない
+- decode不能、NUL、read失敗はそのentryの`file_error`とし、folder全体のscanを失敗させない
+- metadata取得のために巨大fileを無制限に読まず、16 MiBを超えるfileは一覧には残してpreviewだけをerrorにする
+
+`LibraryService`は専用serial executorで`std::filesystem::directory_iterator`を実行する。初期版はWindows Homeと
+同じく現在directoryの1階層だけを列挙し、再帰scanしない。子directoryを先、MUC／N88を後に分け、各groupを
+ASCII case-insensitiveなfile名、同値時は元file名で安定sortする。extension比較はcase-insensitiveとし、
+directory symlinkは表示できるが自動追跡しない。`.`で始まる項目は初期版では表示しない。
+
+folder変更、Refresh、window closeごとに`scan_generation`を進め、旧generationの結果を破棄する。
+AppKit main threadではfilesystem列挙、decode、metadata parseを行わない。Phase 5では選択folderをsession中だけ
+保持し、security-scoped bookmarkやFSEventsは導入しない。
+
+### playback ownerとapplication共有状態
+
+現行`PlaybackCoordinator`は`DocumentId`だけでactive曲を識別するため、editor、direct play、playlistの
+所有関係を表現できない。次の値をCoordinatorのrequestとsnapshotへ追加する。
+
+```text
+PlaybackOwner
+  kind = Editor | Browser | Playlist
+  token = application内で一意な64-bit値
+
+NowPlayingInfo
+  owner, document_id, revision, source_path, content_id, SongMetadata
+```
+
+`CompileAndPlay`と新設する`PlayCompiledSong`はownerを受け取り、play intent世代、active song、ownerを同時に
+更新する。既存editorはwindow／document由来owner、Homeのdirect playは1操作ごとのBrowser owner、
+automatic playerはplaylist generation由来ownerを渡す。Coordinatorのobserverは全windowへ同じimmutable
+snapshotを配る。
+
+Playlist再生中にeditorまたはHomeから別のPlayを実行した場合、新しいownerが通常のCoordinator arbitrationで
+active playbackを取得する。`PlaylistService`はowner不一致を検出してqueueとprefetchをcancelするが、新しい
+再生をStopしない。Playlist windowを閉じただけでは再生を止めず、明示Stop、別ownerのPlay、queue停止、app終了で
+停止する。
+
+### `PlaylistService`と次曲供給
+
+`SetNextSongProvider`はcompile済み`CompiledSong`を同期で返す現在の契約を維持し、provider内でfile readや
+compileを行うことを禁止する。`PlaylistService`はapplication共有serviceとして`LibraryService`、
+`MucomCompileService`、`PlaybackCoordinator`を使用し、現在曲の再生中に次の有効曲を1曲だけ非同期prefetchする。
+
+```text
+PlaylistEntry
+  entry_id, path, metadata
+  state = Pending | Loading | Compiling | Ready | Playing | Failed | Skipped
+  error
+
+PlaylistSnapshot
+  playlist_generation
+  state = Idle | Starting | Playing | Advancing | Stopped | Failed
+  entries
+  current_index, ready_next_index, owner, policy, advance_reason
+
+PlaylistPolicy
+  automatic_advance, loop_folder
+  maximum_play_seconds, maximum_count_percent
+```
+
+自動playlistはWindows `aplayer.hsp`に合わせてcurrent folderのMUCだけを対象とし、N88はHomeからのopen／direct
+playに限定する。開始時のtable sort順をimmutable queueへcopyし、再scanで再生中queueを暗黙変更しない。
+新しいfolderでStart Playlistを押した場合だけ新generationを作る。
+
+prefetchが自然終了までに完了していれば`NextSongProvider`がready曲を返し、Coordinatorが新しい`SessionId`で
+切り替える。未完了なら一度`Finished`に留まり、prefetch完了後に`PlayCompiledSong`で開始する。provider callbackは
+playlist mutexを短時間取得するだけとし、compile、I/O、AppKit callbackを実行しない。
+
+時間／比率threshold、Next、Previousではreadyな対象があれば直ちに`PlayCompiledSong`へ切り替える。未readyなら
+現在曲をStopしてplaylistを`Advancing`にし、対象のload／compile完了後だけ再生する。Previousはcurrent indexを
+1つ戻して既存prefetchをcancelし、先頭では`loop_folder`が有効な場合だけ末尾へwrapする。
+
+compile失敗時はentryを`Failed`にして次候補をprefetchする。1回の周回でqueue要素数を超えて探索せず、全曲が
+失敗した場合はaggregate errorを表示して`Failed`で停止する。Stop、folder変更、別ownerのPlayではload／compile
+operationをcancelし、playlist generation、entry ID、content IDが一致しないcompletionを無視する。
+
+### automatic advance policy
+
+Windows defaultに合わせ、session defaultを`automatic_advance=true`、`loop_folder=true`、
+`maximum_play_seconds=90`、`maximum_count_percent=150`とする。Phase 5ではUI変更を再起動後へ保存しない。
+
+- `maximum_play_seconds`: `0`で無効、1～86400秒を許可する。`Playing`中の`steady_clock`時間だけを加算し、
+  Pause、Preparing、Buffering、DeviceLost中は加算しない
+- `maximum_count_percent`: `0`で無効、1～10000を許可する。`max_count > 0`のとき、64-bit計算で
+  `absolute_interrupt_count * 100 >= max_count * percent`を判定する
+- 両方有効なら先に達した条件で次曲へ進む。自然終了は両設定より優先して即座に次曲へ進む
+- 早送り中も時間条件は実時間、比率条件は曲のinterrupt進行を基準にする
+- Pause中、compile中、device lost中に自動skipしない。Reconnect後は同じ曲を曲頭から再生する現行規則に合わせ、
+  そのentryの実時間も0から測り直す
+- 無効範囲はclampせず`InvalidArgument`を返し、直前の有効policyを維持する
+
+policy判定をAppKit timerへ依存させない。`PlaylistService`のworkerが50～100 ms間隔でCoordinatorのimmutable
+snapshotを読み、threshold到達時だけ次曲commandを発行する。これによりHome／player windowを閉じてもqueueは
+継続し、audio callbackとplayback workerをblockしない。
+
+### macOS UI構成
+
+`MucomAppDelegate`がapplication全体で各1個の`MucomHomeWindowController`と
+`MucomPlayerWindowController`を所有する。現在の巨大な`mucom_editor.mm`へ全UIを追記せず、Home、player／monitor、
+共通presentation controllerを別Objective-C++ fileへ分離してCMake targetへ追加する。
+
+Home windowは`NSSplitViewController`を使う。
+
+- 左: current directory、parent、子directoryを表示するsidebar
+- 中央: MUC／N88の`NSTableView`。file名、kind、title、composerを表示する
+- 右: title、author、composer、date、voice、PCM、commentとentry errorを表示するinspector
+- toolbar: Choose Folder、Back、Refresh、Open in Editor、Play、Export MUB、Start Playlist
+
+Open in Editorは`NSDocumentController`へURLを渡す。macOS版は複数document方式なので、編集中documentを置換せず
+新規または既存windowを前面化する。したがってWindowsのsingle-document確認dialogを模倣せず、dirty documentを
+失わないことを同等条件とする。Playはeditorを作らずBrowser ownerでcompile-and-playする。Export MUBは
+`NSSavePanel`でdestinationを確定後、非同期compileと既存`ExportService`のMUB atomic saveを接続する。
+
+Player windowは上部にNow Playing metadata、中央に11 channel table、下部に共有transport、playlist table、
+Next／Previous／Stop、loop、90秒／150% policy control、compile失敗logを配置する。transportのPause／Resume、
+Stop、speed、audio outputはeditorと同じCoordinator commandを使い、別の再生engineを作らない。
+
+Window menuへHomeとPlayer / Sound Monitorを追加する。application起動時は従来どおりeditorを開き、Homeの自動表示は
+行わない。Home／Playerのwindow frame永続化はPhase 8へ残す。
+
+### monitor表示と更新頻度
+
+channel tableはA～Kを固定行とし、Mute、Voice、Volume、Detune、Address、Key／Key On、LFO、Reverb、Pan、
+Quantizeを列にする。上部にdriver、state、absolute interrupt、current、maximum、loop、speed、audio診断値を
+表示する。Addressは4桁hex、Panは空欄／R／L／C、noteはC、C+、D、D+、E、F、F+、G、G+、A、A+、Bと
+octaveへ整形する。値がないIdle／Preparing時は前曲の値を残さず`—`に戻す。
+
+現在は各editor windowが15 Hz timerを持つため、document数に比例してCoordinatorをpollする。Phase 5では
+macOS main thread上の`PlaybackPresentationController`へ1本化し、最大15 Hzで`Snapshot()`を1回だけ取得して
+editor、Home、Playerへfan-outする。state／error／device lostはCoordinator observerで即時更新し、channel tableは
+timer tickで最新snapshotだけを描画する。snapshot pointerと`SessionId`が同じで値が変わらない場合はtable reloadを
+省略する。windowの購読解除はclose時、timer停止はapp終了時に行う。
+
+audio callbackは従来どおりring buffer消費だけ、playback workerはimmutable `MonitorSnapshot`生成だけを行い、
+AppKit dispatchや描画完了を待たない。表示を開閉しながら再生しても`underruns`／`dropped_frames`が増えないことを
+実CoreAudio手動試験で確認する。
+
+### concurrency、cancel、shutdown
+
+- library scan、file decode、compile、MUB export、playlist prefetchはmain thread外で実行する
+- callbackは`OperationId`、scan／playlist generation、entry ID、owner tokenを照合してからUI modelへ反映する
+- Home selection変更はmetadata表示だけを変更し、active playbackを暗黙停止しない
+- Home／Player deallocation前にUI subscriptionを解除する。service operationはowner／generationで無効化する
+- `ApplicationServices`はPlaylistServiceをCoordinatorより先に停止し、provider解除、policy worker停止、
+  pending load／compile cancel後にCoordinator、compiler、audioを破棄する
+- provider、observer、completionを呼ぶときはCoordinator／playlist mutexを保持しない
+- service実装は`chdir`せず、すべてabsolute pathとrequestのresource directoryを使用する
+
+### Phase 5の実装順序と完了gate
+
+| 段階 | 実施内容 | 完了gate |
+|---|---|---|
+| 5-0 | `SongMetadata`、`LibraryEntry`、owner、Now Playing contract | tag重複／欠落、4 encoding、stale scan、owner切替の単体試験 |
+| 5-1 | `MetadataService`、`LibraryService`、Home一覧／inspector | MUC／N88だけを安定sortし、main threadをblockせずfolder移動できる |
+| 5-2 | Open、direct play、MUB export action | dirty editorを失わずopenし、同じresource規則で直接再生／atomic MUB保存できる |
+| 5-3 | `PlaylistService`、compile-ahead、skip／loop／policy | compile失敗、全失敗、自然終了、90秒、150%、Pause、別owner割込みを再現可能なfake clockで検証 |
+| 5-4 | Player／Now Playing／11 channel monitor、15 Hz fan-out | A～K mapping、session切替時clear、複数window開閉でaudio workerをblockしない |
+| 5-5 | 全構成回帰と実CoreAudio GUI受入 | Release／Debug／ASan+UBSan／TSan全CTest成功、実deviceでplaylistとmonitor操作時のdrop 0 |
+
+5-0で値型とownershipを先に固定し、5-1／5-2で単曲操作を完成させてから5-3のautomatic playerへ進む。
+playlistを先にAppKitだけで組まず、fake clock／fake compilerでpolicyと失敗skipを固定する。5-4では既存editorの
+per-window timerも共通presentation controllerへ移し、monitor windowだけを追加して二重pollを残さない。
+
+### Phase 5で追加・拡張する常設試験
+
+- `metadata_service_test`: UTF-8／BOM／CP932／Shift_JIS、CRLF、最初の同名tag、欠落／未知tag、16 MiB上限
+- `library_service_test`: directory先行sort、MUC／N88 filter、大文字extension、hidden、read error、scan cancel／世代
+- `library_action_test`: dirty documentを破棄しないopen契約、direct playのowner／resource、MUB atomic export、cancel
+- `playlist_service_test`: sort順、1曲／複数曲、compile失敗skip、全失敗停止、末尾loop、Next／Previous、stale completion
+- `playlist_policy_test`: fake clockの90秒、150%、先着条件、Pause除外、fast forward、0無効、範囲外拒否
+- `playback_coordinator_test`: Editor／Browser／Playlist owner arbitration、`PlayCompiledSong`、ready next song、Stop競合
+- `monitor_snapshot_test`: 11 channel、note／pan表示model、SessionId切替、Idle clear、不変snapshot
+- `playback_presentation_test`: 15 Hz上限、同一snapshot coalescing、複数subscriber解除、stale session破棄
+- `app_service_lifetime_test`: playlist provider／workerをCoordinatorより先に停止し、callback残存とdeadlockがない
+
+**Phase 5実装前contract test完了日: 2026-09-28**
+
+metadata 10、library 12、playlist 12、policy 10、presentation 12、integration／lifetime 8の計64ケースを
+`src/tests/phase5/README.md`へID付きで固定し、次の5 executable specificationをCTestへ登録した。
+
+- `phase5_metadata_contract_test`
+- `phase5_library_contract_test`
+- `phase5_playlist_policy_contract_test`
+- `phase5_presentation_contract_test`
+- `phase5_integration_contract_test`
+
+production headerが存在しない実装前段階では各executableが77を返し、CTestは`Skipped`として表示する。
+既存testを無効化したり未実装をPASS扱いにはしない。対応する`editor/song_metadata.h`、
+`editor/library_service.h`、`editor/playlist_service.h`、`editor/playback_presentation.h`が追加されると
+preprocessor guardが外れてcontract本体がcompile／実行される。Phase 5の各段階は対応contractがskipのままでは
+完了にできず、5-5では5件すべてがactiveかつ4 build構成で成功することを要求する。
+
+導入直後にRelease、Debug、ASan／UBSan、TSanの4構成を再buildし、各構成で既存23件が成功、Phase 5の5件だけが
+予定どおりSkippedとなった。通常build、CLI、`MUCOM88Editor.app`のlinkとad-hoc署名を維持し、sanitizer報告もない。
+
+完了条件: `GUI-PLAY-08`、`GUI-HOME-01`～`06`、`GUI-MON-01`～`02`、`GUI-PLAYER-01`～`03`の
+12項目について自動試験とmacOS GUI手動受入が揃い、editor、direct play、automatic playerの競合時もactive
+playbackが1つに保たれる。全既存CTestを4構成で維持し、実CoreAudioでfolder 1周、compile失敗skip、
+monitor windowの反復開閉を行って`underruns=0`、`dropped_frames=0`、hangなしを確認する。
 
 ## Phase 6: Toolとexport
 
@@ -1134,9 +1379,9 @@ Universal BinaryとIntel Macは標準版の完了条件にしない。
 7. Phase 9～10: 署名済み配布物と最終受入
 8. 拡張profile: 実chip、外部driver。標準版後または外部仕様・hardware確保後
 
-次に実施すべき対象はPhase 4の4-6に残る手動受入である。macOSの出力先が内蔵speakerであることを確認して
-`sampl1.muc`のPCM、tempo、音切れ、click、終了noiseを聴感確認し、可能な外部output deviceを物理的に
-切断／再接続して`DeviceLost`と明示`Reconnect`を受け入れる。60分連続再生と診断値、Stop後の解放は完了済みである。
+次のsoftware実装対象はPhase 5の5-0である。`SongMetadata`、library値型、PlaybackOwner、Now Playing contractを
+先に追加し、tag／encoding／stale scan／owner切替の単体試験を固定してからHome UIへ進む。Phase 4の4-6に残る
+内蔵speaker聴感と物理device切断／再接続はrelease受入として並行管理し、Phase 5 source実装の先行条件にはしない。
 Windows golden生成、VM導入、Windows CLI比較は先行条件にしない。
 
 ## 実施履歴
@@ -1165,3 +1410,5 @@ Windows golden生成、VM導入、Windows CLI比較は先行条件にしない�
 | 2026-09-27 | Phase 4 4-4完了 | audio診断表示、256 frame fade-in／out、自然終了fade、Phase 5向け次曲hookを実装 | 100回のtransport／device再初期化、sample連続性、2曲遷移を追加試験。Release buildと全23 CTest成功。sanitizerは4-5、実CoreAudio聴感は4-6へ継続 |
 | 2026-09-27 | Phase 4 4-5完了 | Phase 4追加分を含むdummy audio／sanitizer回帰を実施し、sanitizer build directoryをignore対象化 | Release、Debug、ASan／UBSan、TSanの各構成で全23 CTest成功。memory／UB／data race／hang報告なし。実CoreAudio受入は4-6へ継続 |
 | 2026-09-27 | Phase 4 4-6一部完了 | 実CoreAudioの60分連続再生で20 ms待機が1024-frame callback周期より短くdropする問題を検出し、250 msのbackpressure待機へ修正 | `System Default`で60分、loop 73、rendered 160259072、underrun／drop／refill 0。Stop後Idle／queue 0。4構成の全23 CTest成功。内蔵speaker聴感と物理hotplugは手動受入へ継続 |
+| 2026-09-27 | Phase 5計画具体化 | metadata／library値型、playback owner、compile-ahead playlist、時間／比率policy、Home／Player／11 channel monitor、単一15 Hz presentation経路を確定 | Windows `mucom88win.hsp`／`aplayer.hsp`、既存Document／Compile／Playback／Export service、Phase 4次曲hookを照合。実装は未着手 |
+| 2026-09-28 | Phase 5実装前test完了 | metadata、library、playlist、policy、presentation、integration／lifetimeの64ケースを抽出し、5 executable contractをCTestへ常設登録 | Release／Debug／ASan+UBSan／TSanで既存23件成功、Phase 5の5件は対応header未実装のため予定どおりSkipped。header追加時にcontract本体が自動有効化され、skip残存を各段階の未完了条件とする |
