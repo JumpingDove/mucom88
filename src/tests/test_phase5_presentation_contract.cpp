@@ -74,6 +74,16 @@ int main()
     preparing->state = mucom88::PlaybackState::Preparing;
     const auto cleared = mucom88::BuildPlaybackPresentation(preparing);
     CHECK(test, cleared.session_id == 42);
+    CHECK(test, cleared.state == mucom88::PlaybackState::Preparing);
+    CHECK(test, cleared.driver == mucom88::DriverMode::Unknown);
+    CHECK(test, cleared.absolute_interrupt_count == 0);
+    CHECK(test, cleared.current_count == 0);
+    CHECK(test, cleared.maximum_count == 0);
+    CHECK(test, cleared.loop_count == 0);
+    CHECK(test, cleared.speed == 1);
+    CHECK(test, cleared.underruns == 2);
+    CHECK(test, cleared.dropped_frames == 3);
+    CHECK(test, cleared.refill_events == 4);
     CHECK(test, cleared.channels.size() == 11);
     for (const auto &row : cleared.channels) {
         CHECK(test, row.voice_text == "—");

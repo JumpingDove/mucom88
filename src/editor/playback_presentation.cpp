@@ -64,17 +64,23 @@ PlaybackPresentation BuildPlaybackPresentation(
 
     result.session_id = snapshot->session_id;
     result.state = snapshot->state;
-    result.driver = snapshot->driver;
-    result.absolute_interrupt_count = snapshot->absolute_interrupt_count;
-    result.current_count = snapshot->current_count;
-    result.maximum_count = snapshot->max_count;
-    result.loop_count = snapshot->loop_count;
-    result.speed = snapshot->speed;
     result.underruns = snapshot->audio.underruns;
     result.dropped_frames = snapshot->audio.dropped_frames;
     result.refill_events = snapshot->audio.refill_events;
 
     const bool clear = ClearsChannels(snapshot->state);
+    // Idle/Preparing snapshots identify a session transition, but the driver
+    // counters in them can still be the final values of the previous song.
+    // Keep session/state and cumulative audio diagnostics while presenting
+    // song-specific fields as their neutral defaults.
+    if (!clear) {
+        result.driver = snapshot->driver;
+        result.absolute_interrupt_count = snapshot->absolute_interrupt_count;
+        result.current_count = snapshot->current_count;
+        result.maximum_count = snapshot->max_count;
+        result.loop_count = snapshot->loop_count;
+        result.speed = snapshot->speed;
+    }
     for (std::size_t index = 0; index < result.channels.size(); ++index) {
         const auto &source = snapshot->channels[index];
         auto &target = result.channels[index];

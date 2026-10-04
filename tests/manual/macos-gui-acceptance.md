@@ -75,6 +75,40 @@ callback直前にproducerがtimeoutして`dropped_frames`が増加した。修�
 `System Default`が実際に内蔵speakerへ向いていたかはautomationから特定できないため、内蔵speaker受入は
 `PASS`に含めない。
 
+### Phase 5実CoreAudio GUI受入（2026-10-04）
+
+```text
+app_version=development build (523c72e + Phase 5 acceptance fixes)
+app_sha256=e8b5b09506176c25dc5154674a892c18c416851f15ccda2f7f3fe18a18237091
+git_commit=523c72e (working tree under test)
+macos_version=27.0.1
+macos_build=26A434
+machine_model=MacBook Air (Mac17,3)
+soc=Apple M5
+sdl_version=2.32.72
+test_date=2026-10-04
+tester=Codex GUI automation / local CTest
+device=System Default
+requested_format=44100 Hz / signed 16-bit / 2 ch / 1024 frames
+obtained_format=44100 Hz / signed 16-bit / 2 ch / 1024 frames
+```
+
+| 対象 | 結果 | 証跡 |
+|---|---|---|
+| `GUI-HOME-01`～`02` | PASS | `package`の3 folder／3 MUC、directory先行、metadata、Back、子folder移動、Refreshを実GUI確認。N88／4 encoding／entry単位errorはPhase 3 GUI証跡とPhase 5 contractで補完 |
+| `GUI-HOME-03` | PASS | dirtyな`sampl1.muc`の一時編集を保持したまま`sampl2.muc`を別windowでopen。内容保持後にUndo |
+| `GUI-HOME-04`、`GUI-HOME-06` | PASS | editorを増やさないdirect Playと3曲playlistをSystem Defaultで再生 |
+| `GUI-HOME-05` | PASS | `sampl1.muc`から65,647-byte MUBを保存しmacOS CLIで再読込。save panel Cancelを実GUI、partial非生成をcontractで確認 |
+| `GUI-PLAYER-01` | PASS | missing voiceの一時fixtureを`Failed`としてskipし、3曲目から1曲目へloop。全失敗の有界停止はcontractで確認。試験後fixture削除 |
+| `GUI-PLAYER-02` | PASS | Now Playing、選択行、A～Kがsession切替へ追従。playlist中のBrowser PlayでplaylistだけStopped |
+| `GUI-PLAYER-03` | PASS | 1秒／0%と0秒／1%を個別確認。Pause 3秒中はsession／count不変。Next／Previous／Stop成功 |
+| `GUI-PLAY-08`、`GUI-MON-01`～`02` | PASS | monitor 20回開閉。A～Kとcount表示がactive sessionに一致し、underrun／drop／refill 0、hangなし |
+| 全構成回帰 | PASS | Release／Debug／ASan+UBSan／TSanで各28 CTest成功、Skip 0。ad-hoc署名検証成功 |
+
+受入中にPlayerのsplit pane collapse、Idle時の前曲count残留、複数playlist entryの`Playing`残留を検出し、
+修正後に上記項目を再確認した。主観的な音質と物理device抜き差しはPhase 4の別受入として未完了であり、
+このPhase 5結果には含めない。
+
 ## Editor・document
 
 | ID | Scope | 予定自動試験 | 手動操作と期待結果 |
@@ -132,7 +166,7 @@ callback直前にproducerがtimeoutして`dropped_frames`が増加した。修�
 
 ### Phase 5手動受入手順
 
-Phase 5実装時は、少なくとも次のfixture folderを一時directoryへ用意する。
+Phase 5以後のrelease候補を再受入するときは、少なくとも次のfixture folderを一時directoryへ用意する。
 
 - tagが揃ったUTF-8 MUC、tagなしMUC、CP932 MUC、N88を各1件
 - file名の大文字／小文字と`.MUC`を含むsort確認用file

@@ -15,8 +15,8 @@ Apple Silicon上のRelease/Debug build、CLI、editor core test、およびAppKi
 推奨する到達順は次の通り。
 
 1. arm64 CLI（コンパイル、MUB再生、WAV/VGM/S98書き出し）とSDL2再生（実装済み）
-2. MML document/compile serviceと自動試験の拡充（一部実装済み）
-3. macOS native GUI（一部実装済み）、`pcmtool`、配布物の整備
+2. MML document/compile/playback serviceと自動試験の拡充（Phase 2完了）
+3. macOS native GUI（Phase 3～5完了）、`pcmtool`／汎用export UI（Phase 6）、配布物の整備
 4. 必要性を確認した場合のみFM音色editor、plugin、実chip対応
 
 Windows GUI、HSP プラグイン、FM Tone Editor、SCCI2 は Win32 API に強く依存するため、
@@ -25,9 +25,10 @@ CLI 移植とは別プロジェクト相当の作業になる。
 ## 2. 調査基準
 
 - 初期調査時点: 2026-09-12
-- 最終更新: 2026-09-23
-- 対象コミット: `bf008a4` (`trial-import-for-macOS`、調査時の HEAD)
-- 実機: Apple Silicon (`arm64`)、macOS 26.6.2、Apple clang 21.0.0
+- 最終更新: 2026-10-04
+- 初期調査対象コミット: `bf008a4` (`trial-import-for-macOS`、調査時の HEAD)
+- 最新受入基準: `523c72e`を基点とする作業tree
+- 実機: Apple Silicon (`arm64`)、最新受入時macOS 27.0.1（初期移植時26.6.2）、Apple clang 21.0.0
 - 現行build環境: Command Line Tools、CMake 4.4.3、Homebrew SDL2-compat 2.32.72、macOS SDK iconv
 
 実機確認では、標準の `make` は後述の理由で失敗した。一方、Homebrew の SDL2 用
@@ -41,6 +42,10 @@ include/link フラグと、未定義 `DWORD_PTR` に対する一時的なコン
 上記は初期調査時の記録である。その後、文字コードを含む初期CLI移植とCMake buildを実装し、
 2026-09-22時点では`build/mucom88`と`build/editor_core_test`をarm64 Mach-Oとして生成し、
 Release/Debug双方のCTestを実行済みである。現在の再現手順は13章を正とする。
+
+2026-10-04時点ではPhase 0～3およびPhase 5が完了している。Phase 4は実装、自動試験、実CoreAudio 60分再生まで
+完了し、内蔵speakerの聴感と物理device抜き差しだけをrelease受入へ残す。次の実装対象はPhase 6のtext transform、
+PCM tool、汎用MUB／WAV／VGM／S98 export UIである。最新の横断進捗は`TODO-WIN.md`を正とする。
 
 ## 3. リポジトリの構成と移植上の意味
 
@@ -497,7 +502,8 @@ mucom88 -i song.muc
   `-Werror`にはしない
 - install先は最初はexecutableのみ。data配置規則が確定した変更でinstall ruleを追加
 
-開発者向けnative buildはarchitectureを指定せずhost nativeとする。release/CIでは以下を分ける。
+開発者向けnative buildはarchitectureを指定せずhost nativeとする。標準版のrelease／CIはApple Silicon
+`arm64`とし、Universal Binaryは任意の追加検証としてのみ扱う。
 
 ```text
 # Apple Silicon native
@@ -706,19 +712,17 @@ baselineは次の通りである。これは正式goldenではなく、修正後
 | ASan/UBSan | sample compile/renderでerrorなし |
 | TSanまたは同等検査 | realtime bufferのdata raceなし |
 
-### 11.13 CLI初期移植で保留する判断
+### 11.13 CLI初期移植時の判断と現在の決定
 
-実装を開始する前に製品要件として最終確認が必要なのは以下だけである。技術調査上のblockerではなく、
-上記推奨値で着手可能である。
+初期移植時に保留していた判断は、現在次のように整理している。
 
 - 最低対応macOSは検証機と同系列の26.0とする（16章で決定・実装済み）
-- releaseをUniversal単一binaryにするか、arm64/x86_64別配布にするか
-- dependencyをHomebrew前提にするか、SDL2を配布物へ同梱するか
-- realtime再生をCtrl-Cまでとするか、非loop曲の自然終了検出も初期要件に含めるか
-- default PCM/voice dataをinstall対象へ含めるか、利用者が明示指定する方式にするか
+- 標準architectureはarm64とし、Intel Mac、Rosetta、Universal Binaryは完了条件にしない
+- 開発時はHomebrew SDL2-compatを使用する。配布時のSDL2同梱と`@rpath`はPhase 9で確定する
+- CLIはCtrl-C停止に対応し、service／GUIは非loop曲の自然終了も実装済みである
+- default PCM／voiceは明示resourceとして利用できる。正式install時の同梱場所とlicense表示はPhase 9で確定する
 
-推奨defaultは「macOS 26.0、Universal release、開発時Homebrew・配布時SDL2同梱、初期はCtrl-C停止、
-`mucompcm.bin`と`voice.dat`をlicense/attribution付きでdata directoryへ配置」である。
+このため現在の標準は「macOS 26.0以降、arm64、開発時Homebrew SDL2-compat」である。
 
 ## 12. 初期CLI移植の実装結果
 
@@ -802,7 +806,7 @@ sdl2-config --version
 | 項目 | 値 |
 |---|---|
 | host | Apple Silicon、`arm64` |
-| macOS | 26.6.2、build 25G83 |
+| macOS | 27.0.1、build 26A434（Phase 5受入。初期移植は26.6.2） |
 | Command Line Tools | `/Library/Developer/CommandLineTools` |
 | Apple clang | 21.0.0 (`clang-2100.1.1.101`) |
 | macOS SDK | 26.5 |
@@ -850,9 +854,8 @@ cmake --build build-debug --parallel
 ctest --test-dir build-debug --output-on-failure
 ```
 
-生成物は`build/mucom88`、`build/libmucom88_runtime.a`、test有効時は`build/tests/`以下のtest executableで
-ある。CTestにはPhase 1の7件、Phase 2のservice試験10件、Phase 3のeditor試験3件を加えた20件が
-登録される。
+生成物は`build/mucom88`、`build/MUCOM88Editor.app`、`build/libmucom88_runtime.a`、test有効時は
+`build/tests/`以下のtest executableである。Phase 5完了時点では全28 CTestが登録される。
 
 任意のprefixへinstallする場合は次のように指定する。macOSのinstall targetはCLI executableと
 `MUCOM88Editor.app`を含むが、`mucompcm.bin`、`voice.dat`、SDL2 dylibの配置はまだ自動化されていない。
@@ -888,8 +891,15 @@ ctest --test-dir build --output-on-failure
 | `playback_end_detection_test` | 1.7／1.5／EMの有限曲、loop曲、PCM曲の終端規則 |
 | `monitor_snapshot_test` | A～K、count、session ID、immutable snapshot |
 | `audio_device_service_test` | SDL dummy列挙、format拒否、切断、再接続 |
+| `audio_fade_test` | 開始／停止fade、単調性、callback境界、zero fill |
+| `playback_transport_stress_test` | transportとdevice lifecycleの100回反復、underrun／drop |
 | `export_service_test` | MUB／WAV／VGM／S98、構造、progress、cancel、partial削除 |
 | `app_service_lifetime_test` | application共有所有、shutdown順、遅延callback寿命 |
+| `phase5_metadata_contract_test` | tag、4 encoding、改行、重複、preview上限、entry単位error |
+| `phase5_library_contract_test` | MUC／N88 filter、安定sort、Back、scan cancel／世代、resource解決 |
+| `phase5_playlist_policy_contract_test` | skip／loop／Next／Previous、単一Playing行、時間／比率policy、owner切替 |
+| `phase5_presentation_contract_test` | A～K表示、Idle clear、15 Hz throttle、immutable presentation |
+| `phase5_integration_contract_test` | Browser／Playlist／Editor owner、MUB export、shutdown lifetime |
 | `mub_validation_test` | MUB header／range、PCM有無、切断・overflow・不正magic拒否 |
 | `audiobuffer_test` | ring buffer、fractional sample、underflow、drop、frame境界 |
 | `codeconv_test` | CP932／Shift_JIS、UTF-8、半角PCM名、不正byte、短いbuffer |
@@ -1004,8 +1014,8 @@ lipo -info build-universal/mucom88
 
 この指定では、SDL2を含む全link dependencyが両architectureを収録している必要がある。Homebrewの
 通常installが片方のarchitectureしか提供しない場合、Universal linkは失敗する。deployment target
-26.0はarm64検証機で確認済みだが、Universal Binary、SDL2同梱、codesign、notarizationは未検証であり、
-release配布前に別途確認する。
+26.0はarm64検証機で確認済みである。Universal Binaryは標準版対象外であり、必要になった場合だけ追加検証する。
+SDL2同梱、Developer ID署名、notarizationはPhase 9のrelease配布前に確認する。
 
 現在のarm64 buildはHomebrewの
 `/opt/homebrew/opt/sdl2-compat/lib/libSDL2-2.0.0.dylib`へlinkしている。この絶対pathは開発機での
@@ -1286,9 +1296,11 @@ cancelし、完了時のdocument ID／revisionが現在値と異なる結果をU
   Encoding menuから利用者が明示変更する
 - legacy compilerはerror columnを公開しないため、diagnosticのcolumnは未設定として扱う。UIは複数
   diagnosticを表示できるが、現在のcompilerが返すprimary diagnosticは通常1件である
-- compileはserial workerで非同期実行する。GUIからの再生、停止、速度、monitor、WAV/VGM/S98 exportは
-  service実装まで完了しているが、画面のtransport／save panelは未接続。操作は引き続きCLIを使用する
-- MUBはeditor documentとして開かない。MUB再生／export UIはPhase 4以降の対象とする
+- compileはserial workerで非同期実行する。GUIの再生、停止、速度、Home、playlist、monitor、Homeからの
+  単曲MUB exportはPhase 4～5で接続済みである。WAV／VGM／S98と汎用MUB exportのsave panel、progress、cancelは
+  Phase 6で接続する
+- MUBはeditor documentとして開かない。生成MUBはmacOS CLIで再読込／再生でき、Homeは選択MUCをMUBへ保存できる。
+  MUBをGUI playerへ直接loadする操作はPhase 6以降で判断する
 - sandboxは採用していないためsecurity-scoped bookmarkはN/Aである。sandboxを採用する場合は文書外の
   PCM／voice／ROM／rhythm directoryにbookmark対応が必要となる
 - app icon、Developer ID署名、notarizationは未実装
@@ -1423,8 +1435,8 @@ loop回数を通知する。この規則はMUCOM88 1.7、1.5、EMそれぞれに
 含む`sampl1.muc`で固定した。
 
 monitorは1回のworker更新で11 channelを値型へcopyし、`shared_ptr<const MonitorSnapshot>`として公開する。
-UIが保持済みのsnapshotは後続更新で書き換わらない。描画頻度の15～30 Hz制限と実際のmonitor viewは
-Phase 5で追加する。
+UIが保持済みのsnapshotは後続更新で書き換わらない。Phase 2完了時点で未接続だった描画頻度制限とmonitor viewは、
+Phase 5でapplication共有15 Hz presentationとPlayerのA～K tableとして実装済みである。
 
 ### 19.3 buildと検証
 
@@ -1483,7 +1495,8 @@ CTestに成功した。Coordinator試験は2 documentの競合、複数observer�
 Stop後の遅延compile無効化を確認する。`compile_service_test`はresource snapshot、
 `audio_device_service_test`はrender／drop／refill、`editor_command_test`はplayback state別commandを確認する。
 
-Debug、ASan／UBSan、TSanは4-5で実施する。実CoreAudio device、長時間再生、聴感確認は4-6まで未完了である。
+4-0完了時点ではDebug、ASan／UBSan、TSanと実CoreAudio受入を後続段階へ残した。その後4-5で4構成試験、
+4-6で60分再生を完了した。聴感と物理device切断は25.3の未完了項目である。
 
 ## 21. Phase 4 resource読込と再生GUI（4-1／4-2）
 
@@ -1527,7 +1540,8 @@ application内の旧sessionを停止し、active documentを閉じると再生�
 
 status／progress行はmain threadの15 Hz timerでimmutable snapshotを読み、playback state、driver、
 current／max count、loop回数、現在速度を表示する。有限曲はdeterminate progress、準備中または最大countが
-ない場合はindeterminate表示にする。11 channel詳細monitorとaudio診断値のGUI表示はPhase 5および4-4へ残す。
+ない場合はindeterminate表示にする。4-1／4-2完了時点で後続へ残したaudio診断は4-4、11 channel詳細monitorは
+Phase 5で実装済みである。
 
 ### 21.3 buildと検証
 
@@ -1544,9 +1558,9 @@ ctest --test-dir build --output-on-failure
 PCM非埋込MUBをSDL dummy deviceで再生できることを確認した。`playback_coordinator_test`はdocument編集相当の
 pending play intent取消を確認する。Release構成で`MUCOM88Editor.app`を含むbuildと全21件のCTestに成功した。
 
-4-3のdevice picker／hotplug／Reconnect、4-4のfadeと診断表示、4-5の全sanitizer構成、4-6の実CoreAudio
-60分受入は未実施である。外部ROMは再配布可能な実dataがrepositoryにないため、4-1ではpath検証とerror伝播までを
-自動試験し、実ROMでの再生は手動受入項目として残す。
+4-1／4-2完了時点ではdevice picker／hotplug／Reconnect、fade／診断、sanitizer、実CoreAudio 60分受入を
+後続段階へ残したが、これらは4-3～4-6で実装・検証済みである。外部ROMは再配布可能な実dataがrepositoryに
+ないため、path検証とerror伝播までを自動試験し、実ROMでの再生は手動受入項目として残す。
 
 ## 22. Phase 4 output deviceとReconnect（4-3）
 
@@ -1641,8 +1655,9 @@ AppKit main threadはblockしない。自然終了がprefill量より短い曲�
 発生した場合はplay-intent世代、active song、状態を再照合し、古い結果を再生しない。provider例外はplayback
 worker外へ伝播させない。
 
-現在の`MUCOM88Editor.app`はproviderを設定しないため、自動playlistとしては動作しない。folder選択、skip、
-playlist loop、Now PlayingはPhase 5でこのhookの上に実装する。
+4-4完了時点の`MUCOM88Editor.app`はproviderを設定していなかった。その後Phase 5でapplication共有
+`PlaylistService`がこのhookを使用するようになり、folder選択、compile失敗skip、playlist loop、Now Playingを
+実装済みである。
 
 ### 23.4 buildと検証
 
@@ -1953,6 +1968,35 @@ audio device callbackは従来どおり`SDL_OpenAudioDevice`系を使用する�
 
 Release、Debug、ASan／UBSan、TSanの4構成で`MUCOM88Editor.app`を含むbuildに成功し、各構成の全28 CTestが成功した。
 Phase 5 contract 5件はすべてactive、Skip 0である。TSanの`sdl_audio_lifecycle_test`はさらに5回反復して全回成功した。
-これで5-0～5-4と自動回帰gateは完了した。5-5の実CoreAudio GUI受入（folder 1周、compile error skip、loop、
-90秒／150%、direct play、MUB保存、owner競合、monitor反復開閉とdrop 0）は未実施であり、手順は
-`tests/manual/macos-gui-acceptance.md`を使用する。
+これで5-0～5-4と自動回帰gateは完了した。5-5の実CoreAudio GUI受入結果は次節に記録する。
+
+### 26.9 Phase 5実CoreAudio GUI受入（2026-10-04）
+
+`build/MUCOM88Editor.app`をmacOS 27.0.1（26A434）、Apple Silicon上で起動し、SDL 2.32.72の
+`System Default`を使用した。requested／obtained formatはいずれも44.1 kHz、signed 16-bit、stereo、
+1024 framesである。実施時binaryのSHA-256は
+`e8b5b09506176c25dc5154674a892c18c416851f15ccda2f7f3fe18a18237091`だった。
+
+- Homeで`package`の3 folder／3 MUCを表示し、Back、子folder移動、Refresh、metadata inspectorを確認した
+- dirtyな`sampl1.muc`を保持したまま`sampl2.muc`を別windowで開き、未保存内容が失われないことを確認した
+- Home direct Playでeditor windowを増やさず再生し、Playerと同じactive sessionを表示した
+- `sampl1.muc`を65,647-byteの`build/phase5-acceptance.mub`へ保存し、`build/mucom88 -i`で再読込した。
+  save panelのCancelも確認した
+- 一時的なmissing voice fixtureを4曲目に追加し、1～3曲目の再生、4曲目の`Failed`と具体的error、
+  error skip後の末尾から先頭へのloopを確認した。fixtureは試験後に削除した
+- policyを1秒／0%および0秒／1%で個別に確認した。Pause 3秒間はsession／countが変化せず、Pause時間を
+  最大演奏時間へ加算しなかった
+- Next／Previous／Stop、playlist再生中のHome direct Playによるowner切替を確認した。後者ではplaylistだけが
+  `Stopped`となり、新しいBrowser ownerの曲が継続した
+- Playerを再生中に20回開閉し、A～K、Now Playing、count／maximum／loopがactive sessionに追従した。
+  最終診断値は`underruns=0`、`dropped_frames=0`、`refill_events=0`で、hangはなかった
+
+受入中に3件の不具合を検出して修正した。`NSSplitView`内のtableが高さ0へcollapseする問題には上下paneの
+minimum heightを指定した。Idle／Preparingで前曲のdriver、count、loop、speedが残る問題はpresentation modelで
+曲固有値をdefaultへ戻し、GUIを`Idle`／`Preparing`表示へ切り替えた。曲切替後に過去entryも`Playing`のまま残る
+問題は、active entryを設定するときに以前の`Playing`を`Pending`へ戻し、Stop／owner変更時にもclearするよう修正した。
+
+修正後はRelease、Debug、ASan／UBSan、TSanの4構成で各28 CTestが成功し、Phase 5 contractのSkipは0だった。
+ad-hoc署名の`codesign --verify --deep --strict`も成功した。これによりPhase 5の5-0～5-5を完了とする。
+GUI automationでは聴感を判定できず物理deviceも抜き差ししていないため、この2点は25.3に記載したPhase 4の
+release受入として引き続き未完了である。

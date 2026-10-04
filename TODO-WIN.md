@@ -10,6 +10,8 @@ native applicationとして完成させる。本書でいう機能同等化は�
 
 方針更新日: 2026-09-23
 
+進捗更新日: 2026-10-04
+
 ## 運用ルール
 
 - Windows版との機能同等化に関係する変更を実施したときは、本ファイルを同じ変更内で更新する
@@ -51,9 +53,9 @@ WAV、VGM、S98はWindows版との一致を保証しないが、それぞれのf
 
 | レベル | 対象 | 現状 |
 |---|---|---|
-| Level 1 | CLI compile、再生、MUB/WAV/VGM/S98出力 | 基本経路とmacOS native常設回帰試験20件を実装済み |
-| Level 2 | MML editor、compile、再生、browser、export | Phase 3 editorを完成。Phase 2再生／export serviceのUI接続とbrowserは未完了 |
-| Level 3 | player、monitor、PCM tool、FM音色editor、CoreMIDI | 未着手または旧Makefile targetのみ |
+| Level 1 | CLI compile、再生、MUB/WAV/VGM/S98出力 | 基本経路とmacOS native常設回帰試験28件を実装済み |
+| Level 2 | MML editor、compile、再生、browser、export | editor、再生、Home browser、単曲MUB exportまで完了。汎用export UIはPhase 6 |
+| Level 3 | player、monitor、PCM tool、FM音色editor、CoreMIDI | player／11 channel monitorは完了。PCM tool、FM音色editor、CoreMIDIは未実装 |
 | Level 4 | 署名済み配布、更新、共有、外部provider | 未着手。実chipは拡張profile |
 
 ## 機能一覧の扱い
@@ -144,46 +146,46 @@ CTest、release受入試験からは呼び出さない。
 ### Editor・document
 
 - [x] `GUI-EDIT-01` 複数行MML editorと日本語encoding round trip
-- [-] `GUI-EDIT-02` compile結果・error message pane
-- [ ] `GUI-EDIT-03` cursor位置に追従する行番号表示
+- [x] `GUI-EDIT-02` compile結果・error message pane
+- [x] `GUI-EDIT-03` cursor位置に追従する行番号表示
 - [x] `GUI-EDIT-04` New、Open、Save、Save As、上書き確認
-- [-] `GUI-EDIT-05` MUC、N88-BASIC source、任意textの読込
+- [x] `GUI-EDIT-05` MUC、N88-BASIC source、任意textの読込
 - [-] `GUI-EDIT-06` MMLとvoice編集のdirty state
 - [x] `GUI-EDIT-07` document titleへのfile名反映
-- [-] `GUI-EDIT-08` macOS標準shortcutと互換shortcut
+- [x] `GUI-EDIT-08` macOS標準shortcutと互換shortcut
 - [x] `GUI-EDIT-09` 終了時の未保存確認
 
 ### Compile・再生
 
-- [-] `GUI-PLAY-01` 編集中snapshotのcompileと即時再生
-- [-] `GUI-PLAY-02` 構造化diagnosticとerror行への移動
-- [ ] `GUI-PLAY-03` play、pause、resume、stopとEsc操作
-- [ ] `GUI-PLAY-04` 押下中またはtoggleによる早送り
-- [ ] `GUI-PLAY-05` x2、x4、x6、x8、x10の早送り倍率
+- [x] `GUI-PLAY-01` 編集中snapshotのcompileと即時再生
+- [x] `GUI-PLAY-02` 構造化diagnosticとerror行への移動
+- [x] `GUI-PLAY-03` play、pause、resume、stopとEsc操作
+- [x] `GUI-PLAY-04` 押下中またはtoggleによる早送り
+- [x] `GUI-PLAY-05` x2、x4、x6、x8、x10の早送り倍率
 - [x] `GUI-PLAY-06` slow再生設定を対象外と決定する
-- [ ] `GUI-PLAY-07` 再生位置と最大countのprogress表示
-- [-] `GUI-PLAY-08` 再生中のsound monitor表示
-- [ ] `GUI-PLAY-09` MUCOM88 1.7、1.5、EMの選択結果表示
-- [ ] `GUI-PLAY-10` document相対およびdefault PCM／voice読込
-- [ ] `GUI-PLAY-11` YM2608 rhythm WAV directory指定と再生
+- [x] `GUI-PLAY-07` 再生位置と最大countのprogress表示
+- [x] `GUI-PLAY-08` 再生中のsound monitor表示
+- [x] `GUI-PLAY-09` MUCOM88 1.7、1.5、EMの選択結果表示
+- [x] `GUI-PLAY-10` document相対およびdefault PCM／voice読込
+- [-] `GUI-PLAY-11` YM2608 rhythm WAV directory指定と再生
 
 ### Home・file browser・player
 
-- [-] `GUI-HOME-01` folder移動とMUC／N88一覧
-- [-] `GUI-HOME-02` title、author、composer、date、voice、PCM、comment preview
-- [-] `GUI-HOME-03` 選択fileをeditorで開く
-- [-] `GUI-HOME-04` editorを開かずcompile・再生
-- [-] `GUI-HOME-05` MUB export
-- [-] `GUI-HOME-06` app内playlist／automatic player
-- [-] `GUI-PLAYER-01` folder内MUCの連続再生とcompile失敗skip
-- [-] `GUI-PLAYER-02` Now Playing、tag、channel詳細
-- [-] `GUI-PLAYER-03` 最大時間・曲長割合による自動skip
+- [x] `GUI-HOME-01` folder移動とMUC／N88一覧
+- [x] `GUI-HOME-02` title、author、composer、date、voice、PCM、comment preview
+- [x] `GUI-HOME-03` 選択fileをeditorで開く
+- [x] `GUI-HOME-04` editorを開かずcompile・再生
+- [x] `GUI-HOME-05` MUB export
+- [x] `GUI-HOME-06` app内playlist／automatic player
+- [x] `GUI-PLAYER-01` folder内MUCの連続再生とcompile失敗skip
+- [x] `GUI-PLAYER-02` Now Playing、tag、channel詳細
+- [x] `GUI-PLAYER-03` 最大時間・曲長割合による自動skip
 - [x] `GUI-PLAYER-04` 未配布3D visualizerを対象外と決定する
 
 ### Sound monitor
 
-- [-] `GUI-MON-01` A～Kのvoice、volume、detune、address、key、LFO、reverb、pan、quantize表示
-- [-] `GUI-MON-02` interrupt count、current count、最大値表示
+- [x] `GUI-MON-01` A～Kのvoice、volume、detune、address、key、LFO、reverb、pan、quantize表示
+- [x] `GUI-MON-02` interrupt count、current count、最大値表示
 
 Windows GUIでchannel mute値は表示のみであり操作機能は確認できないため、mute操作は追加要件にしない。
 
@@ -201,8 +203,8 @@ Windows GUIでchannel mute値は表示のみであり操作機能は確認でき
 
 ### Settings・連携・情報
 
-- [ ] `GUI-SET-01` user名、default voice、default PCM、rhythm directory
-- [ ] `GUI-SET-02` autosave、crash recovery、世代backup
+- [-] `GUI-SET-01` user名、default voice、default PCM、rhythm directory
+- [x] `GUI-SET-02` autosave、crash recovery、世代backup
 - [ ] `GUI-SET-03` 日本語・英語localization
 - [ ] `GUI-SET-04` window restoration、font、文字色、背景色
 - [ ] `GUI-SET-05` version付き設定schemaと安全なdefault復帰
@@ -735,9 +737,9 @@ diagnosticは通常1件だが、UIとservice contractは複数件を保持・選
 ### Phase 4の実装境界
 
 Phase 4はPhase 2で実装済みの`MucomCompileService`、`PlaybackSession`、`AudioDeviceService`、
-`MonitorSnapshot`をAppKitへ接続し、実CoreAudio deviceで受け入れる段階とする。folder browser、playlist、
-Now Playing、11 channelの詳細monitorはPhase 5へ残し、Phase 4のeditorにはtransport、簡易progress、driver、
-状態、audio診断だけを表示する。
+`MonitorSnapshot`をAppKitへ接続し、実CoreAudio deviceで受け入れる段階とした。folder browser、playlist、
+Now Playing、11 channelの詳細monitorはPhase 5の責務として分離し、その後Phase 5で実装済みである。
+Phase 4のeditorにはtransport、簡易progress、driver、状態、audio診断を実装した。
 
 `TODO.md`の「Phase 4: SDL dummy audio試験」は既に完了した自動試験基盤を指し、本節のGUI／実device
 Phase 4とは別の段階である。
@@ -777,7 +779,7 @@ editor上部をtransport行とstatus／progress行に分け、次を配置する
 
 UIはaudio callbackやplayback workerから描画を待たせない。main threadのtimerで15 Hz程度に
 `LatestSnapshot`を取得し、有限曲はdeterminate progress、loop曲はloop内位置とloop回数、max count不明時は
-indeterminate progressとして表示する。A～Kのchannel詳細表示はPhase 5で追加する。
+indeterminate progressとして表示する。A～Kのchannel詳細表示は後続のPhase 5で追加済みである。
 
 shortcutはWindows GUIの実処理に合わせ、F5／F12をCompile & Play、EscをPlaying／Buffering時のPauseと
 Paused時のResumeにする。完全停止はStop buttonとPlayback menuから実行する。Control-F1は押下中だけ選択済み
@@ -956,8 +958,8 @@ envelopeを複数callbackへ分割した結果と連続bufferへ適用した結�
 
 `PlaybackCoordinator::SetNextSongProvider`を追加した。hook未設定またはnull返却時は従来どおり`Finished`で
 停止し、次の`CompiledSong`が返った場合だけ再生optionを引き継いで新しい`SessionId`へ移る。hook処理中に
-Stopや別のplay intentが入った場合は世代とactive songの再照合で結果を破棄する。editorはhookを登録せず、
-playlist UIはPhase 5へ残す。
+Stopや別のplay intentが入った場合は世代とactive songの再照合で結果を破棄する。Phase 4のeditorはhookを
+登録せず、後続のPhase 5でplaylist UIと`PlaylistService`を接続した。
 
 `audio_fade_test`で開始値、終了値、単調性、隣接sample差、callbackをまたぐ適用、fade後のzero fillを確認した。
 `playback_transport_stress_test`はSDL dummy上でPlay／Pause／Resume／Stopとdevice open／closeを100回反復する。
@@ -1041,6 +1043,7 @@ PCM欠落がない。
 - [x] 11 channelのmonitor view
 - [x] monitor更新頻度を制限し、audio threadをblockしない
 - [x] document、browser、playlist間で同じactive playback状態を共有する
+- [x] 5-5全構成回帰と実CoreAudio GUI受入
 
 ### Phase 5の対象とWindows機能対応
 
@@ -1295,8 +1298,21 @@ skip 0である。
 
 Release、Debug、ASan／UBSan、TSanの各構成で`MUCOM88Editor.app`を含むbuildに成功し、全28 CTestが成功した。
 Phase 5 contract 5件はすべてactiveでSkipは0、sanitizer報告もない。TSanのSDL audio lifecycle試験は追加で5回反復し、
-全回成功した。5-0～5-4のproduction実装と自動回帰gateは完了した。5-5の実CoreAudio GUI手動受入だけは未実施であり、
-上位の機能一覧では該当項目を`[-]`のまま保持する。
+全回成功した。5-0～5-4のproduction実装と自動回帰gateは完了した。
+
+**Phase 5実CoreAudio GUI受入完了日: 2026-10-04**
+
+`System Default`（requested／obtainedとも44.1 kHz、signed 16-bit、stereo、1024 frames）で5-5を実施した。
+Homeのfolder移動／Back／Refresh、3 MUCのmetadata、dirty editorを保持した別document open、direct play、
+65,647-byte MUBの保存とmacOS CLI再読込、3曲と一時的なcompile error曲によるskip／末尾loopを確認した。
+policyは1秒／0%と0秒／1%を個別に適用し、Pause 3秒間はsessionとcountが進まないことを確認した。
+playlist再生中の別owner PlayではplaylistだけがStoppedになり、新しい曲が継続した。monitorは20回開閉後も
+A～K、Now Playing、countがactive sessionと一致し、`underruns=0`、`dropped_frames=0`、`refill_events=0`だった。
+
+受入中に、Playerのsplit paneが0高さになる問題、Idleで前曲のcount／loopが残る問題、曲切替後に複数entryが
+`Playing`になる問題を検出して修正した。後二者にはcontract testを追加し、Release、Debug、ASan／UBSan、TSanの
+各構成で全28 CTest成功、Skip 0を再確認した。これにより5-0～5-5と上記12項目を完了とする。音の聴感と
+物理device抜き差しはPhase 4の別受入項目であり、Phase 5完了には含めない。
 
 完了条件: `GUI-PLAY-08`、`GUI-HOME-01`～`06`、`GUI-MON-01`～`02`、`GUI-PLAYER-01`～`03`の
 12項目について自動試験とmacOS GUI手動受入が揃い、editor、direct play、automatic playerの競合時もactive
@@ -1383,7 +1399,7 @@ Universal BinaryとIntel Macは標準版の完了条件にしない。
 - [ ] 署名・notarization済みappをcleanなmacOS 26環境で起動する
 - [ ] appとCLIのversion、resource、driverが一致する
 - [ ] 非保証事項、除外2項目、拡張profileの対応状況をrelease noteへ記載する
-- [ ] macOS版で生成したMUBをmacOS版自身が再読込・再生できる
+- [x] macOS版で生成したMUBをmacOS版自身が再読込・再生できる
 
 ## 実装順序
 
@@ -1396,10 +1412,9 @@ Universal BinaryとIntel Macは標準版の完了条件にしない。
 7. Phase 9～10: 署名済み配布物と最終受入
 8. 拡張profile: 実chip、外部driver。標準版後または外部仕様・hardware確保後
 
-次の作業はPhase 5の5-5実CoreAudio GUI受入である。folder 1周、compile error skip、末尾loop、90秒／150% skip、
-dirty editorからのopen、direct play、MUB保存、playlist中のeditor Play、monitor反復開閉を実機で確認する。
-その完了後にPhase 6のTool／exportへ進む。Phase 4の4-6に残る内蔵speaker聴感と物理device切断／再接続も
-release受入として並行管理する。Windows golden生成、VM導入、Windows CLI比較は先行条件にしない。
+次の作業はPhase 6のtext transform、PCM tool、汎用MUB／WAV／VGM／S98 exportである。Phase 4の4-6に残る
+内蔵speaker聴感と物理device切断／再接続はrelease受入として並行管理する。Windows golden生成、VM導入、
+Windows CLI比較は先行条件にしない。
 
 ## 実施履歴
 
@@ -1430,3 +1445,5 @@ release受入として並行管理する。Windows golden生成、VM導入、Win
 | 2026-09-27 | Phase 5計画具体化 | metadata／library値型、playback owner、compile-ahead playlist、時間／比率policy、Home／Player／11 channel monitor、単一15 Hz presentation経路を確定 | Windows `mucom88win.hsp`／`aplayer.hsp`、既存Document／Compile／Playback／Export service、Phase 4次曲hookを照合。実装は未着手 |
 | 2026-09-28 | Phase 5実装前test完了 | metadata、library、playlist、policy、presentation、integration／lifetimeの64ケースを抽出し、5 executable contractをCTestへ常設登録 | Release／Debug／ASan+UBSan／TSanで既存23件成功、Phase 5の5件は対応header未実装のため予定どおりSkipped。header追加時にcontract本体が自動有効化され、skip残存を各段階の未完了条件とする |
 | 2026-09-29 | Phase 5 5-0～5-4／自動回帰完了 | metadata／library、owner／Now Playing、Home、direct play／MUB export、compile-ahead playlist／policy、Player／11 channel monitor、application共有15 Hz presentationを実装。FMGEN可変tableをinstance化し、SDL timerをstop／join可能なthreadへ変更 | Release／Debug／ASan+UBSan／TSanで全28 CTest成功。Phase 5 contract 5件はactive、skip 0。TSan SDL lifecycleを追加5反復。実CoreAudio GUI受入は5-5へ継続 |
+| 2026-10-04 | Phase 5 5-5完了 | 実CoreAudioでHome、MUB export、playlist skip／loop／policy、owner競合、monitor 20回開閉を受入。split pane、Idle残値、複数Playing行を修正 | 4構成で各28 CTest成功、Skip 0。System Defaultでunderrun／drop／refill 0、hangなし。Phase 5の12 GUI項目を完了 |
+| 2026-10-04 | 文書整合性更新 | Phase 3～5の完了状態、28 CTest、GUI build／起動、Phase 5 contractの追加不変条件を全Markdownへ反映 | staleなbrowser／transport／playlist未実装表記を解消し、Phase 6を次作業として統一 |

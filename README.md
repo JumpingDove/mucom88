@@ -27,12 +27,25 @@ OPEN MUCOM88プロジェクトは、オリジナルのMUCOM88ソースコード�
 macOS では SDL2 と iconv を使用します。Homebrew を使用する例です。
 
 ```sh
-brew install cmake sdl2
-cmake -S src -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build
+brew install cmake sdl2-compat
+cmake -S src -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
 ```
 
-最低対応OSは、この移植の検証環境と同じmacOS 26系列（deployment target 26.0）である。
+Apple Silicon上ではCLIの`build/mucom88`に加え、native MML editor、Home、playlist、sound monitorを含む
+`build/MUCOM88Editor.app`を生成する。新規文書で起動する場合とMUCを直接開く場合は次のとおり。
+
+```sh
+open "$PWD/build/MUCOM88Editor.app"
+open -a "$PWD/build/MUCOM88Editor.app" "$PWD/package/sampl1.muc"
+```
+
+development appはad-hoc署名されるが、HomebrewのSDL2-compat dylibを参照するため、そのまま別Macへ配布する
+成果物ではない。詳細なbuild、GUI操作、検証済み範囲、残課題は`IMPORT-FOR-MACOS.md`と`TODO-WIN.md`を参照する。
+
+最低対応OSは、初期移植の検証環境と同じmacOS 26系列（deployment target 26.0）である。
+最新のPhase 5 GUI受入はmacOS 27.0.1でも成功している。
 より新しいtargetを指定する場合はCMake configure時に
 `-DCMAKE_OSX_DEPLOYMENT_TARGET=<version>`を追加する。
 

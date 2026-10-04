@@ -682,8 +682,16 @@ NSNotificationName const MucomPlaybackPresentationDidUpdateNotification =
     split.translatesAutoresizingMaskIntoConstraints = NO;
     split.vertical = NO;
     split.dividerStyle = NSSplitViewDividerStyleThin;
-    [split addSubview:Phase5TableScroll(_channelTable)];
-    [split addSubview:Phase5TableScroll(_playlistTable)];
+    NSScrollView *channelScroll = Phase5TableScroll(_channelTable);
+    NSScrollView *playlistScroll = Phase5TableScroll(_playlistTable);
+    [split addSubview:channelScroll];
+    [split addSubview:playlistScroll];
+    // NSSplitView lays out its children, but an Auto Layout child without an
+    // intrinsic height may otherwise collapse to zero. Keep both panes
+    // visible while still allowing the divider and window resize to adjust
+    // their actual sizes.
+    [channelScroll.heightAnchor constraintGreaterThanOrEqualToConstant:250].active = YES;
+    [playlistScroll.heightAnchor constraintGreaterThanOrEqualToConstant:130].active = YES;
 
     [content addSubview:_nowPlaying];
     [content addSubview:_diagnostics];
@@ -742,17 +750,28 @@ NSNotificationName const MucomPlaybackPresentationDidUpdateNotification =
     } else {
         _nowPlaying.stringValue = @"Nothing playing";
     }
-    _diagnostics.stringValue = [NSString stringWithFormat:
-        @"Session %llu • state %ld • driver %d • count %lld / %lld • loop %lld • speed %dx • underrun %llu • dropped %llu • refill %llu",
-        static_cast<unsigned long long>(_presentation.session_id),
-        static_cast<long>(_presentation.state),
-        static_cast<int>(_presentation.driver),
-        static_cast<long long>(_presentation.current_count),
-        static_cast<long long>(_presentation.maximum_count),
-        static_cast<long long>(_presentation.loop_count), _presentation.speed,
-        static_cast<unsigned long long>(_presentation.underruns),
-        static_cast<unsigned long long>(_presentation.dropped_frames),
-        static_cast<unsigned long long>(_presentation.refill_events)];
+    if (_presentation.state == mucom88::PlaybackState::Idle ||
+        _presentation.state == mucom88::PlaybackState::Preparing) {
+        NSString *stateText = _presentation.state == mucom88::PlaybackState::Idle
+            ? @"Idle" : @"Preparing";
+        _diagnostics.stringValue = [NSString stringWithFormat:
+            @"%@ • underrun %llu • dropped %llu • refill %llu", stateText,
+            static_cast<unsigned long long>(_presentation.underruns),
+            static_cast<unsigned long long>(_presentation.dropped_frames),
+            static_cast<unsigned long long>(_presentation.refill_events)];
+    } else {
+        _diagnostics.stringValue = [NSString stringWithFormat:
+            @"Session %llu • state %ld • driver %d • count %lld / %lld • loop %lld • speed %dx • underrun %llu • dropped %llu • refill %llu",
+            static_cast<unsigned long long>(_presentation.session_id),
+            static_cast<long>(_presentation.state),
+            static_cast<int>(_presentation.driver),
+            static_cast<long long>(_presentation.current_count),
+            static_cast<long long>(_presentation.maximum_count),
+            static_cast<long long>(_presentation.loop_count), _presentation.speed,
+            static_cast<unsigned long long>(_presentation.underruns),
+            static_cast<unsigned long long>(_presentation.dropped_frames),
+            static_cast<unsigned long long>(_presentation.refill_events)];
+    }
     _playlistStatus.stringValue = [NSString stringWithFormat:
         @"Playlist: %@ • %lu entries", PlaylistStateText(_playlistSnapshot.state),
         static_cast<unsigned long>(_playlistSnapshot.entries.size())];

@@ -2,10 +2,13 @@
 
 ## 目的
 
-macOS向けMUCOM88 CLIを、ローカルとGitHub Actionsの両方で再現可能に検証する。
-最低対応OSはmacOS 26.0とし、arm64とx86_64のbuild、offline出力、SDL2音声制御を継続的に確認する。
+macOS向けMUCOM88 CLIとnative GUIを、ローカルとGitHub Actionsの両方で再現可能に検証する。
+最低対応OSはmacOS 26.0、標準architectureはApple Siliconのarm64とし、build、offline出力、SDL2音声制御を
+継続的に確認する。Intel Mac、Rosetta、Universal Binaryは標準版の完了条件にしない。
 
 作成日: 2026-09-21
+
+更新日: 2026-10-04
 
 ## 基本方針
 
@@ -15,7 +18,8 @@ macOS向けMUCOM88 CLIを、ローカルとGitHub Actionsの両方で再現可�
 - sanitizer、長時間試験、fuzzingはnightlyへ分離する
 - GitHub-hosted runnerの音声試験は`SDL_AUDIODRIVER=dummy`を使用する
 - CoreAudio実デバイスの試験はself-hosted Macまたはrelease前の手動試験とする
-- golden値は現在の出力を無条件に採用せず、既知のWindows版または移植前baselineと照合して確定する
+- golden値は現在の出力を無条件に採用せず、review済みのmacOS native fixture、format不変条件、決定性で確定する。
+  Windows runtimeやWindows生成hashとの一致は必須にしない
 - 初期段階では既存warningを理由に`-Werror`を有効化しない。warning解消後に別途必須化する
 
 ## Phase 0: 既存テスト基盤の修復
@@ -173,7 +177,7 @@ realtime CLIはCtrl-Cまで終了しないため、CIから外部signalで終了
 - [ ] workflow/jobの権限を`permissions: contents: read`へ制限する
 - [ ] 同一PRの古いrunを`concurrency`でcancelする
 - [ ] 各jobへ`timeout-minutes`を設定する
-- [ ] matrixの`fail-fast`をfalseにし、両architectureの結果を残す
+- [ ] 将来matrixを追加する場合は`fail-fast`をfalseにし、全jobの結果を残す
 - [ ] 使用するGitHub Actionを検証済みの完全commit SHAへ固定する
 - [ ] runner imageの変更に備え、OS、Xcode、clang、CMake、SDL2 versionをlogへ出す
 
@@ -181,16 +185,15 @@ realtime CLIはCtrl-Cまで終了しないため、CIから外部signalで終了
 
 | job | runner label | architecture | 必須 |
 |---|---|---|---|
-| `macos-arm64` | `macos-26` | arm64 | yes |
-| `macos-intel` | `macos-26-intel` | x86_64 | yes |
+| `macos-arm64` | 導入時に利用可能なmacOS 26以降のarm64 label | arm64 | yes |
 
-`macos-latest`は参照先が変化するため使用しない。runner labelの提供状況はworkflow導入時に
-GitHub公式documentationで再確認する。
+`macos-latest`は参照先が変化するため使用しない。具体的なrunner labelの提供状況はworkflow導入時に
+GitHub公式documentationで再確認する。x86_64は任意の追加jobであり、required checkにしない。
 
 ### job内の基本command
 
 ```sh
-brew install sdl2
+brew install sdl2-compat
 cmake -S src -B build \
   -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
@@ -203,7 +206,7 @@ file build/mucom88
 ```
 
 - [ ] Mach-Oの`minos`が26.0であることをscriptで検査する
-- [ ] arm64 jobではarm64、Intel jobではx86_64であることを検査する
+- [ ] required jobがarm64であることを検査する
 - [ ] 一方のjobでMakefile buildもsmoke testする
 - [ ] CI初期段階ではHomebrew/build cacheを導入せず、再現性を優先する
 - [ ] 失敗時だけtest log、hash差分、必要最小限の生成物をartifactへ保存する
@@ -212,7 +215,6 @@ file build/mucom88
 ### branch protection
 
 - [ ] `macos-arm64`をrequired status checkにする
-- [ ] `macos-intel`をrequired status checkにする
 - [ ] workflowが安定するまではsanitizerをrequiredにしない
 
 ## Phase 6: Nightly試験
@@ -236,10 +238,11 @@ GitHub-hosted runnerでは実音声出力を必須試験にしない。
 
 ### 手動release試験
 
+- [x] `System Default`でSample Music 1を60分再生し、underrun／drop／refill 0を確認する
 - [ ] MacBook Air内蔵speakerでSample Music 1を60秒以上再生する
 - [ ] PCM、FM、tempo、音切れ、クリックノイズを聴感確認する
-- [ ] 終了時のunderrun/dropped samplesが0であることを確認する
-- [ ] Ctrl-C後にexit 0かつhangしないことを確認する
+- [x] 終了時のunderrun/dropped samplesが0であることを確認する
+- [x] Ctrl-C後にexit 0かつhangしないことを確認する
 - [ ] 48 kHzのCoreAudio device上で44.1 kHz SDL streamが動作することを確認する
 - [ ] headphone/Bluetooth等、利用対象deviceが決まった場合は追加確認する
 
@@ -256,8 +259,8 @@ GitHub-hosted runnerでは実音声出力を必須試験にしない。
 
 ### 最初のCI導入完了
 
-- [ ] clean checkoutからarm64/x86_64のCMake buildが成功する
-- [ ] `ctest --test-dir build --output-on-failure`が両architectureで成功する
+- [ ] clean checkoutからarm64のCMake buildが成功する
+- [ ] `ctest --test-dir build --output-on-failure`がarm64 required jobで成功する
 - [ ] sample 1～3のcompile結果が検証済みgoldenと一致する
 - [ ] 1秒WAVの構造、sample数、hashが一致する
 - [ ] SDL dummy試験がtimeout、underrun、hangなしで終了する

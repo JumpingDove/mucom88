@@ -7,6 +7,7 @@
 #include "tests/test_support.h"
 
 #include <SDL.h>
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -126,11 +127,33 @@ int main()
     CHECK(test, WaitFor([&] {
         return services->playlist->Snapshot().current_index == 2;
     }, std::chrono::seconds(10)));
+    {
+        const auto snapshot = services->playlist->Snapshot();
+        CHECK(test, std::count_if(snapshot.entries.begin(), snapshot.entries.end(),
+            [](const mucom88::PlaylistEntry &entry) {
+                return entry.state == mucom88::PlaylistEntryState::Playing;
+            }) == 1);
+        CHECK(test, snapshot.entries[2].state ==
+            mucom88::PlaylistEntryState::Playing);
+    }
 
     services->playlist->Previous();
     CHECK(test, WaitFor([&] {
-        return services->playlist->Snapshot().current_index == 0;
+        const auto snapshot = services->playlist->Snapshot();
+        return snapshot.current_index == 0 &&
+            snapshot.state == mucom88::PlaylistState::Playing &&
+            snapshot.entries[0].state ==
+                mucom88::PlaylistEntryState::Playing;
     }, std::chrono::seconds(10)));
+    {
+        const auto snapshot = services->playlist->Snapshot();
+        CHECK(test, std::count_if(snapshot.entries.begin(), snapshot.entries.end(),
+            [](const mucom88::PlaylistEntry &entry) {
+                return entry.state == mucom88::PlaylistEntryState::Playing;
+            }) == 1);
+        CHECK(test, snapshot.entries[0].state ==
+            mucom88::PlaylistEntryState::Playing);
+    }
     const auto playlistOwner = services->playlist->Snapshot().owner;
     mucom88::CompileRequest browserRequest =
         services->library->LoadCompileRequest(
@@ -146,8 +169,17 @@ int main()
         return services->playlist->Snapshot().state ==
             mucom88::PlaylistState::Stopped;
     }, std::chrono::seconds(5)));
-    CHECK(test, services->playback_coordinator->Snapshot().state ==
-        mucom88::PlaybackState::Playing);
+    {
+        const auto snapshot = services->playlist->Snapshot();
+        CHECK(test, std::none_of(snapshot.entries.begin(), snapshot.entries.end(),
+            [](const mucom88::PlaylistEntry &entry) {
+                return entry.state == mucom88::PlaylistEntryState::Playing;
+            }));
+    }
+    // The one-note browser fixture may naturally finish before the playlist's
+    // asynchronous owner-change notification is observed. Its ownership must
+    // remain intact even when it has already reached Finished.
+    CHECK(test, services->playback_coordinator->Snapshot().owner != playlistOwner);
 
     services->playback_coordinator->Stop();
     services.reset();

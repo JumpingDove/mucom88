@@ -157,6 +157,21 @@ public:
         return snapshot.policy.loop_folder ? 0 : index;
     }
 
+    void ClearPlayingEntriesLocked()
+    {
+        for (auto &entry : snapshot.entries) {
+            if (entry.state == PlaylistEntryState::Playing)
+                entry.state = PlaylistEntryState::Pending;
+        }
+    }
+
+    void MarkEntryPlayingLocked(std::size_t index)
+    {
+        ClearPlayingEntriesLocked();
+        if (index < snapshot.entries.size())
+            snapshot.entries[index].state = PlaylistEntryState::Playing;
+    }
+
     void QueueCandidate(std::size_t index, int direction, std::size_t attempted,
         PlaylistAdvanceReason reason)
     {
@@ -333,7 +348,7 @@ public:
             if (snapshot.state == PlaylistState::Advancing) {
                 activeSong = song;
                 snapshot.current_index = index;
-                snapshot.entries[index].state = PlaylistEntryState::Playing;
+                MarkEntryPlayingLocked(index);
                 snapshot.state = PlaylistState::Starting;
                 owner = snapshot.owner;
                 ResetElapsedLocked();
@@ -370,6 +385,7 @@ public:
             if (advance) activeSong.reset();
             if (snapshot.state == PlaylistState::Advancing && exhausted) {
                 snapshot.state = PlaylistState::Failed;
+                ClearPlayingEntriesLocked();
                 snapshot.error = {ServiceErrorCode::InvalidData,
                     "No playable MUC file was found in the playlist.", {}, true};
             }
@@ -414,8 +430,7 @@ public:
                 activeSong = result;
                 snapshot.current_index = *snapshot.ready_next_index;
                 snapshot.ready_next_index.reset();
-                snapshot.entries[snapshot.current_index].state =
-                    PlaylistEntryState::Playing;
+                MarkEntryPlayingLocked(snapshot.current_index);
                 snapshot.state = PlaylistState::Starting;
                 ResetElapsedLocked();
             } else {
@@ -480,6 +495,7 @@ public:
                 if (!allowed) {
                     activeSong.reset();
                     snapshot.state = PlaylistState::Stopped;
+                    ClearPlayingEntriesLocked();
                 }
                 if (allowed && direction > 0 && readySong &&
                     snapshot.ready_next_index &&
@@ -487,7 +503,7 @@ public:
                     prepared = std::move(readySong);
                     snapshot.ready_next_index.reset();
                     snapshot.current_index = index;
-                    snapshot.entries[index].state = PlaylistEntryState::Playing;
+                    MarkEntryPlayingLocked(index);
                     snapshot.state = PlaylistState::Starting;
                     snapshot.advance_reason = reason;
                     owner = snapshot.owner;
@@ -521,9 +537,7 @@ public:
             if (value.owner == snapshot.owner) {
                 if (value.state == PlaybackState::Playing) {
                     snapshot.state = PlaylistState::Playing;
-                    if (snapshot.current_index < snapshot.entries.size())
-                        snapshot.entries[snapshot.current_index].state =
-                            PlaylistEntryState::Playing;
+                    MarkEntryPlayingLocked(snapshot.current_index);
                     startPrefetch = !readySong;
                 } else if (value.state == PlaybackState::Finished &&
                     snapshot.state == PlaylistState::Playing) {
@@ -547,6 +561,7 @@ public:
                 readySong.reset();
                 snapshot.ready_next_index.reset();
                 snapshot.state = PlaylistState::Stopped;
+                ClearPlayingEntriesLocked();
                 snapshot.advance_reason = PlaylistAdvanceReason::OwnerChanged;
                 ownerChanged = true;
             }
@@ -737,6 +752,7 @@ OperationHandle PlaylistService::Stop()
         impl_->snapshot.ready_next_index.reset();
         owner = impl_->snapshot.owner;
         impl_->snapshot.state = PlaylistState::Stopped;
+        impl_->ClearPlayingEntriesLocked();
         impl_->snapshot.advance_reason = PlaylistAdvanceReason::Stopped;
     }
     compile.Cancel();

@@ -37,13 +37,29 @@ Corp.'s [website](https://www.ancient.co.jp/~mucom88/).
 The macOS CLI uses SDL2 and iconv. With Homebrew:
 
 ```sh
-brew install cmake sdl2
-cmake -S src -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build
+brew install cmake sdl2-compat
+cmake -S src -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
 ```
 
-The minimum supported release is the macOS 26 family used for this port's
-validation (`CMAKE_OSX_DEPLOYMENT_TARGET=26.0`). A newer target can be selected
+On Apple Silicon this builds `build/mucom88` and the native MML editor,
+Home, playlist, and sound monitor application at
+`build/MUCOM88Editor.app`. Launch a new document or open a MUC directly with:
+
+```sh
+open "$PWD/build/MUCOM88Editor.app"
+open -a "$PWD/build/MUCOM88Editor.app" "$PWD/package/sampl1.muc"
+```
+
+The development app is ad-hoc signed but still links to the Homebrew
+SDL2-compat dylib, so it is not a distributable bundle for another Mac. See
+`IMPORT-FOR-MACOS.md` and `TODO-WIN.md` for detailed build instructions,
+validated functionality, and remaining work.
+
+The minimum supported release is the macOS 26 family used for the initial port
+validation (`CMAKE_OSX_DEPLOYMENT_TARGET=26.0`). The latest Phase 5 GUI
+acceptance also passed on macOS 27.0.1. A newer target can be selected
 explicitly when configuring CMake.
 
 Alternatively, run `make` in `src`; the Makefile discovers SDL2 through

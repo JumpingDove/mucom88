@@ -1,4 +1,4 @@
-# Phase 5 pre-implementation contract tests
+# Phase 5 contract tests
 
 This directory contains executable specifications for Phase 5. They were
 registered before the production services existed. All activating production
@@ -10,6 +10,13 @@ This arrangement keeps the existing regression suite green without weakening
 the Phase 5 requirements or leaving non-compiling tests in the normal build.
 A Phase 5 stage is not complete if its corresponding contract test fails or is
 reported as skipped.
+
+## Current status
+
+Phase 5 stages 5-0 through 5-5 were completed on 2026-10-04. All five
+contract executables are active (zero skipped), and the complete 28-test suite
+passes in Release, Debug, ASan/UBSan, and TSan. The real CoreAudio GUI
+acceptance record is in `tests/manual/macos-gui-acceptance.md`.
 
 ## Activation map
 
@@ -63,15 +70,15 @@ and real audio devices are not permitted in these contract tests.
 |---|---|---|
 | `LIST-01` | start from sorted folder entries | only MUC entries are copied into an immutable queue |
 | `LIST-02` | one finite song | natural finish advances according to loop policy without duplicate play |
-| `LIST-03` | multiple successful songs | playback follows queue order and wraps exactly once at the end |
+| `LIST-03` | multiple successful songs | playback follows queue order, wraps exactly once at the end, and exposes exactly one Playing entry |
 | `LIST-04` | one compile failure between successes | the failed entry is recorded and the next valid entry starts |
 | `LIST-05` | all entries fail | one bounded pass is made, then playlist state becomes Failed |
 | `LIST-06` | stale load or compile completion | generation, entry ID, and content ID mismatch are ignored |
 | `LIST-07` | ready prefetch at natural end | next-song provider returns it without performing I/O or compile |
 | `LIST-08` | prefetch not ready at natural end | Finished is retained, then `PlayCompiledSong` starts it on completion |
-| `LIST-09` | Next and Previous | correct target is selected; Previous wraps only when loop is enabled |
-| `LIST-10` | explicit Stop | provider is detached and pending load/compile is cancelled |
-| `LIST-11` | Editor or Browser takes ownership | playlist cancels itself and never stops the new owner |
+| `LIST-09` | Next and Previous | correct target is the only Playing entry; Previous wraps only when loop is enabled |
+| `LIST-10` | explicit Stop | provider is detached, pending work is cancelled, and no entry remains Playing |
+| `LIST-11` | Editor or Browser takes ownership | playlist clears its Playing entry, cancels itself, and never stops the new owner |
 | `LIST-12` | folder rescan while playing | immutable active queue is unchanged |
 | `POLICY-01` | default policy | automatic advance and loop are on, with 90 seconds and 150 percent |
 | `POLICY-02` | 0 time or 0 percent | that individual threshold is disabled |
@@ -94,7 +101,7 @@ and real audio devices are not permitted in these contract tests.
 | `PRES-04` | pan values | blank, R, L, C, and unknown value formatting are deterministic |
 | `PRES-05` | count header | absolute, current, maximum, loop, driver, state, speed, and diagnostics are preserved |
 | `PRES-06` | SessionId changes | rows from the previous song are never displayed for the new session |
-| `PRES-07` | Idle or Preparing | stale rows are cleared to placeholders |
+| `PRES-07` | Idle or Preparing | stale rows and song-specific header values are cleared while cumulative audio diagnostics remain available |
 | `PRES-08` | immutable snapshots | retaining an older presentation does not change after later updates |
 | `PRES-09` | 15 Hz throttle | a fake clock proves no more than one periodic fan-out per interval |
 | `PRES-10` | immediate state/error event | it bypasses the periodic channel throttle without duplicating rows |
@@ -114,10 +121,14 @@ and real audio devices are not permitted in these contract tests.
 | `INT-07` | provider invokes completion while Stop races | play-intent generation accepts at most one winner |
 | `INT-08` | error isolation | one bad metadata file or compile entry does not terminate Home or the playlist service |
 
-## Completion rule
+## Completion rule and result
 
 Before Phase 5 can be marked complete, all five contract executables must be
 active rather than skipped, every case above must pass in Release, Debug,
 ASan/UBSan, and TSan, and the manual scenarios in
 `tests/manual/macos-gui-acceptance.md` must also pass on the real CoreAudio
 device.
+
+This rule is satisfied by the 2026-10-04 run. Subjective listening quality and
+physical output-device unplug/reconnect remain separate Phase 4 release
+acceptance items and are not Phase 5 completion criteria.
