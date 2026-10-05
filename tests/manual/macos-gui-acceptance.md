@@ -190,15 +190,18 @@ Phase 5以後のrelease候補を再受入するときは、少なくとも次の
 
 | ID | Scope | 予定自動試験 | 手動操作と期待結果 |
 |---|---|---|---|
-| `GUI-TOOL-01` | standard | `text_transform_test`: N88行番号 | preview後に適用できUndoで戻せる |
-| `GUI-TOOL-02` | standard | `text_transform_test`: G channel `q` | 他channelとcommentを変えず変換する |
-| `GUI-TOOL-03` | standard | `text_transform_test`: tag | metadata tagを追加し重複規則を表示する |
-| `GUI-TOOL-04` | standard | `voice_service_test`: voice抽出 | 使用voiceだけを追記して再compileする |
-| `GUI-TOOL-05` | standard | `pcmtool_test`: DATA／VOICE | sourceからPCM bankを生成・再読込する |
-| `GUI-TOOL-06` | standard | `pcmtool_test`: list／WAV／ADPCM | 最大32 entryのbankを生成し失敗fileを特定する |
-| `GUI-TOOL-07` | standard | `text_transform_test`: N88出力 | 開始行と増分を反映しsave panelへ出力する |
-| `GUI-EXPORT-01` | standard | `export_format_test`: RIFF | 指定秒数のWAVを保存しcancel時に一時fileを残さない |
-| `GUI-EXPORT-02` | standard | `export_format_test`: VGM／S98 | header、command、wait、終端が妥当な形式を保存する |
+| `GUI-TOOL-01` | standard | `phase6_text_transform_contract_test`: N88行番号 | preview後に適用でき、Undo一回で本文・選択範囲・dirty状態が戻る |
+| `GUI-TOOL-02` | standard | `phase6_text_transform_contract_test`: G channel `q` | 他channel、tag、commentを変えず変換する |
+| `GUI-TOOL-03` | standard | `phase6_text_transform_contract_test`: tag | 欠落tagだけ追加し、既存・重複tagの規則を表示する |
+| `GUI-TOOL-04` | standard | `phase6_voice_append_contract_test`: voice抽出 | 使用voiceだけを一度ずつ追記し、再compile・Undoできる |
+| `GUI-TOOL-05` | standard | `phase6_pcm_bank_contract_test`: DATA／VOICE | sourceからPCM bankを生成し、macOS版で再読込する |
+| `GUI-TOOL-06` | standard | `phase6_pcm_bank_contract_test`: list／WAV／ADPCM | 最大32 entryのbankを生成し、失敗fileとlist行を表示する |
+| `GUI-TOOL-07` | standard | `phase6_text_transform_contract_test`: N88出力 | 開始行と増分を反映し、save panel Cancelではfileを作らない |
+| `GUI-EXPORT-01` | standard | `phase6_export_operation_test`／`phase6_format_validator_contract_test`: RIFF | 指定秒数のWAVを保存し、progress・cancel・非無音を確認する |
+| `GUI-EXPORT-02` | standard | `phase6_export_operation_test`／`phase6_format_validator_contract_test`: VGM／S98 | header、command、wait、終端が妥当な形式を保存する |
+
+Phase 6の実装前contractは`src/tests/phase6/README.md`に記録する。save panel Cancelではoperationを開始せず、
+処理中Cancelでは既存destinationを維持して一時fileを残さない。生成したMUBはmacOS版で再読込・再生する。
 
 ## Settings・連携・情報
 

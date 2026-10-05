@@ -25,7 +25,7 @@ CLI 移植とは別プロジェクト相当の作業になる。
 ## 2. 調査基準
 
 - 初期調査時点: 2026-09-12
-- 最終更新: 2026-10-04
+- 最終更新: 2026-10-05
 - 初期調査対象コミット: `bf008a4` (`trial-import-for-macOS`、調査時の HEAD)
 - 最新受入基準: `523c72e`を基点とする作業tree
 - 実機: Apple Silicon (`arm64`)、最新受入時macOS 27.0.1（初期移植時26.6.2）、Apple clang 21.0.0
@@ -43,9 +43,10 @@ include/link フラグと、未定義 `DWORD_PTR` に対する一時的なコン
 2026-09-22時点では`build/mucom88`と`build/editor_core_test`をarm64 Mach-Oとして生成し、
 Release/Debug双方のCTestを実行済みである。現在の再現手順は13章を正とする。
 
-2026-10-04時点ではPhase 0～3およびPhase 5が完了している。Phase 4は実装、自動試験、実CoreAudio 60分再生まで
-完了し、内蔵speakerの聴感と物理device抜き差しだけをrelease受入へ残す。次の実装対象はPhase 6のtext transform、
-PCM tool、汎用MUB／WAV／VGM／S98 export UIである。最新の横断進捗は`TODO-WIN.md`を正とする。
+2026-10-05時点ではPhase 0～3およびPhase 5が完了し、Phase 6の実装前test 6件を追加した。Phase 4は実装、
+自動試験、実CoreAudio 60分再生まで完了し、内蔵speakerの聴感と物理device抜き差しだけをrelease受入へ残す。
+次の実装対象はPhase 6のtext transform、PCM tool、汎用MUB／WAV／VGM／S98 export UIである。
+最新の横断進捗は`TODO-WIN.md`を正とする。
 
 ## 3. リポジトリの構成と移植上の意味
 
@@ -855,7 +856,8 @@ ctest --test-dir build-debug --output-on-failure
 ```
 
 生成物は`build/mucom88`、`build/MUCOM88Editor.app`、`build/libmucom88_runtime.a`、test有効時は
-`build/tests/`以下のtest executableである。Phase 5完了時点では全28 CTestが登録される。
+`build/tests/`以下のtest executableである。Phase 6の実装前contract追加後は全34 CTestが登録され、
+未実装serviceに対応する5件はSkipとなる。Phase 6完了時にはSkip 0が必要である。
 
 任意のprefixへinstallする場合は次のように指定する。macOSのinstall targetはCLI executableと
 `MUCOM88Editor.app`を含むが、`mucompcm.bin`、`voice.dat`、SDL2 dylibの配置はまだ自動化されていない。
@@ -900,6 +902,12 @@ ctest --test-dir build --output-on-failure
 | `phase5_playlist_policy_contract_test` | skip／loop／Next／Previous、単一Playing行、時間／比率policy、owner切替 |
 | `phase5_presentation_contract_test` | A～K表示、Idle clear、15 Hz throttle、immutable presentation |
 | `phase5_integration_contract_test` | Browser／Playlist／Editor owner、MUB export、shutdown lifetime |
+| `phase6_text_transform_contract_test` | N88行番号、G channel、tag、N88出力、preview／stale apply。service実装までSkip |
+| `phase6_voice_append_contract_test` | 使用FM voiceの重複除去、順序、preview／再適用。service実装までSkip |
+| `phase6_pcm_bank_contract_test` | DATA／VOICE、list／WAV／ADPCM、32件上限、path／error。service実装までSkip |
+| `phase6_format_validator_contract_test` | WAV／VGM／S98の独立構造検査と破損入力拒否。validator実装までSkip |
+| `phase6_export_operation_test` | 実render中cancel、progress、既存file保護、partial削除。現行serviceで実行 |
+| `phase6_integration_contract_test` | PCM bank、tag、compile、MUB／WAV exportの結合。service実装までSkip |
 | `mub_validation_test` | MUB header／range、PCM有無、切断・overflow・不正magic拒否 |
 | `audiobuffer_test` | ring buffer、fractional sample、underflow、drop、frame境界 |
 | `codeconv_test` | CP932／Shift_JIS、UTF-8、半角PCM名、不正byte、短いbuffer |
@@ -2000,3 +2008,16 @@ minimum heightを指定した。Idle／Preparingで前曲のdriver、count、loo
 ad-hoc署名の`codesign --verify --deep --strict`も成功した。これによりPhase 5の5-0～5-5を完了とする。
 GUI automationでは聴感を判定できず物理deviceも抜き差ししていないため、この2点は25.3に記載したPhase 4の
 release受入として引き続き未完了である。
+
+## 27. Phase 6実装前contract test（2026-10-05）
+
+Phase 6のproduction serviceより先に、text transform、voice定義追記、PCM bank、独立format parser、
+export非同期操作、service結合の6 CTestを登録した。caseと想定する公開APIは`src/tests/phase6/README.md`に記録した。
+既存`ExportService`を使う1件は実render途中のcancel、progress IDと単調性、既存destinationの保護、
+失敗時のpartial削除を実行する。新serviceのheaderが必要な5件は現時点でSkipとなり、header追加後に本体を
+compile・実行する。Phase 6完了判定ではSkipを認めない。
+
+Release buildでは`ctest --test-dir build --output-on-failure -R '^phase6_'`を実行し、1 Pass／5 Skipだった。
+全suiteは34件登録で29 Pass／5 Skipを確認した。Phase 6の6 test executableはDebug、ASan／UBSan、TSanでも
+buildし、activeなexport試験は全4構成でPassした。Phase 6のGUI実操作と5件のcontract有効化は
+production実装後のgateとして残る。既存Phase 5受入の28件成功という記録は、その時点の履歴である。

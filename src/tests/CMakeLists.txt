@@ -126,6 +126,31 @@ mucom88_add_phase5_contract_test(phase5_presentation_contract_test
 mucom88_add_phase5_contract_test(phase5_integration_contract_test
     test_phase5_integration_contract.cpp 90)
 
+# Phase 6 executable specifications are registered before their production
+# services. A missing activating header returns 77; Phase 6 completion requires
+# every contract to become active and pass.
+function(mucom88_add_phase6_contract_test target source timeout)
+    mucom88_add_test_executable(${target} ${source})
+    add_test(NAME ${target} COMMAND ${target})
+    mucom88_set_test_properties(${target} ${timeout})
+    set_tests_properties(${target} PROPERTIES
+        SKIP_RETURN_CODE 77
+        ENVIRONMENT "SDL_AUDIODRIVER=dummy")
+endfunction()
+
+mucom88_add_phase6_contract_test(phase6_text_transform_contract_test
+    test_phase6_text_transform_contract.cpp 30)
+mucom88_add_phase6_contract_test(phase6_voice_append_contract_test
+    test_phase6_voice_append_contract.cpp 45)
+mucom88_add_phase6_contract_test(phase6_pcm_bank_contract_test
+    test_phase6_pcm_bank_contract.cpp 60)
+mucom88_add_phase6_contract_test(phase6_format_validator_contract_test
+    test_phase6_format_validator_contract.cpp 60)
+mucom88_add_phase6_contract_test(phase6_export_operation_test
+    test_phase6_export_operation.cpp 90)
+mucom88_add_phase6_contract_test(phase6_integration_contract_test
+    test_phase6_integration_contract.cpp 90)
+
 mucom88_add_test_executable(mub_validation_test test_mub.cpp)
 add_test(NAME mub_validation_test COMMAND mub_validation_test)
 mucom88_set_test_properties(mub_validation_test 15)

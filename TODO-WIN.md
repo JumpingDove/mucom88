@@ -10,7 +10,7 @@ native applicationとして完成させる。本書でいう機能同等化は�
 
 方針更新日: 2026-09-23
 
-進捗更新日: 2026-10-04
+進捗更新日: 2026-10-05
 
 ## 運用ルール
 
@@ -1321,6 +1321,14 @@ monitor windowの反復開閉を行って`underruns=0`、`dropped_frames=0`、ha
 
 ## Phase 6: Toolとexport
 
+**実装前contract test追加日: 2026-10-05**
+
+`src/tests/phase6/README.md`にservice APIと試験caseを定義し、CTestへ6件登録した。Releaseでは既存28件と
+`phase6_export_operation_test`の計29件がPass、未実装のtext transform、voice追記、PCM bank、独立parser、
+結合の5件は予定どおりSkipした。6件のbuildとactiveなexport試験はDebug、ASan／UBSan、TSanでも成功した。
+SkipはPhase 6完了時に0へする。現行`ExportService`については実render中cancel、既存destination保護、progress、
+error時のpartial削除を追加検証した。GUI受入9項目は未実施である。
+
 - [ ] text transformをUIから分離し、previewとUndoを提供する
 - [ ] N88行番号除去、G channel変換、metadata tag追加
 - [ ] 使用FM voice定義の追記
@@ -1447,3 +1455,4 @@ Windows CLI比較は先行条件にしない。
 | 2026-09-29 | Phase 5 5-0～5-4／自動回帰完了 | metadata／library、owner／Now Playing、Home、direct play／MUB export、compile-ahead playlist／policy、Player／11 channel monitor、application共有15 Hz presentationを実装。FMGEN可変tableをinstance化し、SDL timerをstop／join可能なthreadへ変更 | Release／Debug／ASan+UBSan／TSanで全28 CTest成功。Phase 5 contract 5件はactive、skip 0。TSan SDL lifecycleを追加5反復。実CoreAudio GUI受入は5-5へ継続 |
 | 2026-10-04 | Phase 5 5-5完了 | 実CoreAudioでHome、MUB export、playlist skip／loop／policy、owner競合、monitor 20回開閉を受入。split pane、Idle残値、複数Playing行を修正 | 4構成で各28 CTest成功、Skip 0。System Defaultでunderrun／drop／refill 0、hangなし。Phase 5の12 GUI項目を完了 |
 | 2026-10-04 | 文書整合性更新 | Phase 3～5の完了状態、28 CTest、GUI build／起動、Phase 5 contractの追加不変条件を全Markdownへ反映 | staleなbrowser／transport／playlist未実装表記を解消し、Phase 6を次作業として統一 |
+| 2026-10-05 | Phase 6実装前test追加 | text transform、voice追記、PCM bank、独立format parser、export operation、結合の6契約をCTestへ登録 | Releaseで全34件中29 Pass／5 Skip。Phase 6の6件はDebug／ASan+UBSan／TSanでもbuildし、activeなexport試験は全4構成でPass。5 Skipは対応service実装までの予定状態 |
