@@ -10,19 +10,24 @@ while any of its contract tests is skipped or failing.
 
 | CTest | Activating header | Current result |
 |---|---|---|
-| `phase6_text_transform_contract_test` | `editor/text_transform_service.h` | Skip |
+| `phase6_text_transform_contract_test` | `editor/text_transform_service.h` | Pass |
 | `phase6_voice_append_contract_test` | voice append and text transform headers | Skip |
 | `phase6_pcm_bank_contract_test` | `editor/pcm_bank_service.h` | Skip |
 | `phase6_format_validator_contract_test` | `editor/export_format_validator.h` | Skip |
 | `phase6_export_operation_test` | existing `editor/export_service.h` | Pass |
 | `phase6_integration_contract_test` | text transform, PCM bank, and validator headers | Skip |
 
-Release build and CTest run: 34 registered, 29 passed, 5 skipped. The six
-Phase 6 executables also build in Debug, ASan/UBSan, and TSan; the active
-export operation test passes in all four configurations. The five
-skipped executables currently compile only their fallback branches. Their
-production-facing bodies must be compiled and run when the corresponding
-services are implemented. The existing 28 Phase 0–5 tests remain active.
+Text transform service is implemented, including N88 removal, G-channel
+conversion, missing metadata insertion, and N88 export. Apply uses an atomic
+DocumentService document/revision check; unchanged text does not add a revision.
+The macOS Tools menu provides N88 removal with original/converted previews,
+Cancel, and a single Undo/Redo operation restoring the previous selection.
+Real GUI acceptance remains pending.
+
+Release, Debug, ASan/UBSan, and TSan: 34 registered, 30 passed, 4 skipped;
+GUI builds succeed in all four configurations. The four skipped executables
+still compile their fallback branches. The existing 28 Phase 0–5 tests remain
+active. Voice append, PCM bank, validator, and integration are not implemented.
 
 Run `ctest --test-dir build --output-on-failure -R '^phase6_'` for this phase.
 All tests use separate CTest working directories. They may create uniquely
@@ -59,7 +64,10 @@ contract together, preserving the observable behaviors below.
 | N88 removal | decimal line numbers and the first apostrophe are removed; MML and later apostrophes remain |
 | malformed N88 | mixed numbered and unnumbered source fails without losing text |
 | preview/apply | preview is read-only; apply changes one revision and dirty state |
-| stale preview | applying after a new edit returns Conflict and preserves that edit |
+| stale preview | applying after a new edit or to another document returns Conflict and preserves text |
+| concurrent apply | exactly one of two changed previews commits; the other returns Conflict |
+| unchanged apply | unchanged text preserves revision |
+| malformed input | invalid UTF-8, missing N88 apostrophe, and multiline tag values are rejected |
 | G channel | only G-channel `q` commands change; other channels, tags, comments, and uppercase `Q` remain |
 | tag insertion | existing title wins, missing composer/PCM are added, and a second run is idempotent |
 | N88 export | start/increment and blank lines are reflected; export/removal round trip restores text |

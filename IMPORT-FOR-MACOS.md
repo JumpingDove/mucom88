@@ -2021,3 +2021,20 @@ Release buildでは`ctest --test-dir build --output-on-failure -R '^phase6_'`を
 全suiteは34件登録で29 Pass／5 Skipを確認した。Phase 6の6 test executableはDebug、ASan／UBSan、TSanでも
 buildし、activeなexport試験は全4構成でPassした。Phase 6のGUI実操作と5件のcontract有効化は
 production実装後のgateとして残る。既存Phase 5受入の28件成功という記録は、その時点の履歴である。
+
+
+## 28. Phase 6初回実装: text transform（2026-10-05）
+
+`TextTransformService`へN88行番号除去、G channelの小文字q変換、欠落metadata tag追加、
+N88-BASIC出力の4変換を実装した。previewは文書を変更せず、document ID／revisionを保持する。
+Applyは`DocumentService::ReplaceTextIfCurrent`でID／revision確認と更新を同じmutex内で行い、
+古いpreviewや別文書への適用をConflictで拒否する。本文変更は一revision、変更なしはrevisionを保持する。
+
+macOSのTools → Remove N88 Line Numbers…に変換前後previewとApply／Cancelを追加した。
+Applyは一つのUndo groupへ登録し、Undo／Redoで本文と選択範囲を復元する。編集通知は既存の
+model同期、compile取消、dirty状態、recovery処理へ接続する。実GUIでのGUI-TOOL-01受入は未確認である。
+G channel変換、tag追加、N88出力のGUIとvoice追記、PCM bank、validatorは後続作業とする。
+
+Release／Debug／ASan+UBSan／TSanでGUI buildと全34 CTestが成功し、30 Pass／4 Skipになった。
+text transform契約は有効化され、異なる文書、変更なし、不正UTF-8、apostrophe保持、tag値の改行拒否、
+同時Applyの競合も検証する。Phase 6全体の完了条件は引き続きSkip 0と実GUI受入である。

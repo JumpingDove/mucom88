@@ -200,6 +200,12 @@ Phase 5以後のrelease候補を再受入するときは、少なくとも次の
 | `GUI-EXPORT-01` | standard | `phase6_export_operation_test`／`phase6_format_validator_contract_test`: RIFF | 指定秒数のWAVを保存し、progress・cancel・非無音を確認する |
 | `GUI-EXPORT-02` | standard | `phase6_export_operation_test`／`phase6_format_validator_contract_test`: VGM／S98 | header、command、wait、終端が妥当な形式を保存する |
 
+`GUI-TOOL-01`の操作入口はTools → Remove N88 Line Numbers…である。
+番号付きsourceを開き、選択範囲を設定してpreviewを表示する。Original／Previewを確認し、
+Cancelで本文・revision・dirtyが変わらないこと、Applyで変換できること、Undo一回で本文・
+選択範囲・dirtyが戻り、Redoで再適用できることを確認する。保存済み／未保存の文書を両方確認する。
+番号なし行やapostrophe欠落の入力はerrorを表示し、本文を変更しない。実GUI evidenceは未取得である。
+
 Phase 6の実装前contractは`src/tests/phase6/README.md`に記録する。save panel Cancelではoperationを開始せず、
 処理中Cancelでは既存destinationを維持して一時fileを残さない。生成したMUBはmacOS版で再読込・再生する。
 

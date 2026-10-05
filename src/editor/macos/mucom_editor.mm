@@ -14,6 +14,7 @@
 
 #include "editor/application_services.h"
 #include "editor/document_service.h"
+#include "editor/text_transform_service.h"
 #include "editor/editor_command.h"
 #include "editor/recovery_service.h"
 
@@ -421,6 +422,8 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     (const mucom88::PlaybackCoordinatorSnapshot &)snapshot;
 - (void)refreshAudioDevices:(BOOL)force;
 - (mucom88::CompileRequest)configuredCompileRequest;
+- (IBAction)removeN88LineNumbers:(id)sender;
+- (void)replaceToolText:(NSString *)text selection:(NSRange)selection;
 - (IBAction)goToLine:(id)sender;
 - (IBAction)changeEncoding:(id)sender;
 - (BOOL)restoreRecoveryAtPath:(NSString *)path error:(NSError **)error;
@@ -815,6 +818,92 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     [_editorView scrollRangeToVisible:range];
     [_editorView showFindIndicatorForRange:range];
     [_editorView.window makeFirstResponder:_editorView];
+}
+
+- (void)replaceToolText:(NSString *)text selection:(NSRange)selection
+{
+    NSString *previous = [_editorView.string copy];
+    NSRange previousSelection = _editorView.selectedRange;
+    [self.undoManager registerUndoWithTarget:self handler:^(MucomDocument *target) {
+        [target replaceToolText:previous selection:previousSelection];
+    }];
+    [self.undoManager setActionName:@"Remove N88 Line Numbers"];
+    _updatingEditor = YES;
+    [_editorView.textStorage replaceCharactersInRange:
+        NSMakeRange(0, _editorView.string.length) withString:text];
+    ApplyEditorTextAppearance(_editorView);
+    selection.location = std::min(selection.location, _editorView.string.length);
+    selection.length = std::min(selection.length,
+        _editorView.string.length - selection.location);
+    _editorView.selectedRange = selection;
+    _updatingEditor = NO;
+    [_editorView didChangeText];
+}
+
+- (IBAction)removeN88LineNumbers:(id)sender
+{
+    (void)sender;
+    NSError *error = nil;
+    if (![self syncModelFromEditor:&error]) {
+        [self presentError:error];
+        return;
+    }
+    mucom88::TextTransformService service;
+    mucom88::TextTransformRequest request;
+    request.kind = mucom88::TextTransformKind::RemoveN88LineNumbers;
+    const auto source = _model->Snapshot();
+    const auto result = service.Preview(source, request);
+    if (!result.Succeeded()) {
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.messageText = @"Cannot Remove N88 Line Numbers";
+        alert.informativeText = StringFromUtf8(result.error.message);
+        [alert beginSheetModalForWindow:_editorView.window completionHandler:nil];
+        return;
+    }
+    const auto preview = result.value;
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.messageText = @"Remove N88 Line Numbers";
+    alert.informativeText = @"Review the original and converted source before applying.";
+    [alert addButtonWithTitle:@"Apply"];
+    [alert addButtonWithTitle:@"Cancel"];
+    NSView *container = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 680, 300)];
+    const std::string texts[] = {source.utf8_text, preview.utf8_text};
+    for (int index = 0; index < 2; ++index) {
+        NSTextField *label = [NSTextField labelWithString:
+            index == 0 ? @"Original" : @"Preview"];
+        label.frame = NSMakeRect(index * 345, 278, 330, 22);
+        [container addSubview:label];
+        NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:
+            NSMakeRect(index * 345, 0, 335, 275)];
+        scroll.hasVerticalScroller = YES;
+        scroll.hasHorizontalScroller = YES;
+        NSTextView *view = [[NSTextView alloc] initWithFrame:scroll.bounds];
+        view.editable = NO;
+        view.font = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
+        view.string = StringFromUtf8(texts[index]);
+        scroll.documentView = view;
+        [container addSubview:scroll];
+    }
+    alert.accessoryView = container;
+    [alert beginSheetModalForWindow:_editorView.window
+        completionHandler:^(NSModalResponse response) {
+        if (response != NSAlertFirstButtonReturn) return;
+        mucom88::TextTransformService transform;
+        const auto applied = transform.Apply(*self->_model, preview);
+        if (!applied.Succeeded()) {
+            NSError *applyError = nil;
+            SetError(&applyError, 3, StringFromUtf8(applied.error.message));
+            [self presentError:applyError];
+            return;
+        }
+        if (source.utf8_text == preview.utf8_text) return;
+        [self->_editorView breakUndoCoalescing];
+        [self.undoManager beginUndoGrouping];
+        [self replaceToolText:StringFromUtf8(preview.utf8_text)
+            selection:NSMakeRange(0, 0)];
+        [self.undoManager endUndoGrouping];
+        [self->_editorView breakUndoCoalescing];
+    }];
 }
 
 - (IBAction)goToLine:(id)sender
@@ -1278,6 +1367,9 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
         return mucom88::IsEditorCommandEnabled(
             mucom88::EditorCommand::Compile, state);
     }
+    if (item.action == @selector(removeN88LineNumbers:)) {
+        return _editorView != nil && _editorView.window.attachedSheet == nil;
+    }
     if (item.action == @selector(goToLine:)) {
         return mucom88::IsEditorCommandEnabled(
             mucom88::EditorCommand::GoToLine, state);
@@ -1439,6 +1531,13 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
         NSEventModifierFlagCommand | NSEventModifierFlagShift;
     findPrevious.tag = NSTextFinderActionPreviousMatch;
     AddMenuItem(editMenu, @"Go to Line…", @selector(goToLine:), @"l");
+
+    NSMenuItem *toolsItem = [[NSMenuItem alloc] init];
+    [mainMenu addItem:toolsItem];
+    NSMenu *toolsMenu = [[NSMenu alloc] initWithTitle:@"Tools"];
+    toolsItem.submenu = toolsMenu;
+    AddMenuItem(toolsMenu, @"Remove N88 Line Numbers…",
+        @selector(removeN88LineNumbers:), @"");
 
     NSMenuItem *formatItem = [[NSMenuItem alloc] init];
     [mainMenu addItem:formatItem];

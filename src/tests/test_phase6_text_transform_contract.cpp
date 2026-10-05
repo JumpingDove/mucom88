@@ -4,6 +4,7 @@
 #include "tests/test_support.h"
 
 #include <string>
+#include <thread>
 
 namespace {
 
@@ -108,6 +109,54 @@ int main()
     n88.line_increment = 10;
     n88.first_line_number = 2147483640;
     CHECK(test, !transform.Preview(plain, n88).Succeeded());
+    // A matching revision in a different document cannot accept this preview.
+    mucom88::DocumentService other;
+    CHECK(test, other.OpenData("A original\n").Succeeded());
+    const auto wrongDocument = transform.Apply(other, stripped.value);
+    CHECK(test, !wrongDocument.Succeeded());
+    CHECK(test, wrongDocument.error.code == mucom88::ServiceErrorCode::Conflict);
+    CHECK(test, other.Snapshot().utf8_text == "A original\n");
+
+    const auto unchanged = Open(test, document, "A c\n", "same.muc");
+    const auto noChange = transform.Preview(unchanged, convert);
+    CHECK(test, noChange.Succeeded());
+    CHECK(test, transform.Apply(document, noChange.value).value.revision ==
+        unchanged.revision);
+    const auto badApostrophe = Open(test, document, "10 A c\n", "bad.n88");
+    CHECK(test, !transform.Preview(badApostrophe, remove).Succeeded());
+    const auto apostrophes = Open(test, document, "10 'A c 'later\n20 '\n", "quote.n88");
+    CHECK(test, transform.Preview(apostrophes, remove).value.utf8_text ==
+        "A c 'later\n\n");
+    const auto quoted = Open(test, document,
+        "G q1 \"q2\" ; q3\n", "quoted.muc");
+    CHECK(test, transform.Preview(quoted, convert).value.utf8_text ==
+        "G @1 \"q2\" ; q3\n");
+    tags.metadata_tags = {{"composer", "bad\n#pcm injected"}};
+    CHECK(test, !transform.Preview(unchanged, tags).Succeeded());
+    tags.metadata_tags = {{"composer", "valid"}};
+    const auto unterminated = Open(test, document, "#title Existing", "tags.muc");
+    CHECK(test, transform.Preview(unterminated, tags).value.utf8_text ==
+        "#title Existing\n#composer valid\n");
+    // Two concurrent applies of a changed preview cannot both commit.
+    const auto concurrentSource = Open(test, document, "10 'A c\n", "race.n88");
+    const auto concurrentPreview = transform.Preview(concurrentSource, remove);
+    CHECK(test, concurrentPreview.Succeeded());
+    mucom88::ServiceResult<mucom88::DocumentSnapshot> firstApply, secondApply;
+    std::thread firstWorker([&] {
+        firstApply = transform.Apply(document, concurrentPreview.value);
+    });
+    std::thread secondWorker([&] {
+        secondApply = transform.Apply(document, concurrentPreview.value);
+    });
+    firstWorker.join();
+    secondWorker.join();
+    CHECK(test, firstApply.Succeeded() != secondApply.Succeeded());
+    CHECK(test, (firstApply.Succeeded() ? secondApply : firstApply).error.code ==
+        mucom88::ServiceErrorCode::Conflict);
+    CHECK(test, document.Snapshot().revision == concurrentSource.revision + 1);
+    auto malformed = unchanged;
+    malformed.utf8_text = std::string(1, char(0xff));
+    CHECK(test, !transform.Preview(malformed, convert).Succeeded());
     return test.ExitCode();
 }
 #else

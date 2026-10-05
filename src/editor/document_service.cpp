@@ -402,6 +402,25 @@ public:
         return result;
     }
 
+    ServiceResult<DocumentSnapshot> ReplaceTextUnlocked(std::string utf8Text)
+    {
+        ServiceResult<DocumentSnapshot> result;
+        if (ContainsNul(utf8Text) || !IsStrictUtf8(utf8Text)) {
+            result.error = {ServiceErrorCode::InvalidData,
+                "Editor text must be valid UTF-8 without embedded NUL bytes.", {}, false};
+            return result;
+        }
+        std::string normalized = NormalizeNewlines(utf8Text);
+        if (snapshot.utf8_text != normalized) {
+            snapshot.utf8_text = std::move(normalized);
+            ReconcileLineEndings(&snapshot);
+            ++snapshot.revision;
+            snapshot.content_id = ContentId(snapshot);
+        }
+        result.value = snapshot;
+        return result;
+    }
+
     mutable std::mutex mutex;
     DocumentSnapshot snapshot;
     std::string original_bytes;
@@ -446,21 +465,20 @@ ServiceResult<DocumentSnapshot> DocumentService::OpenData(
 ServiceResult<DocumentSnapshot> DocumentService::ReplaceText(std::string utf8Text)
 {
     std::lock_guard<std::mutex> lock(impl_->mutex);
-    ServiceResult<DocumentSnapshot> result;
-    if (ContainsNul(utf8Text) || !IsStrictUtf8(utf8Text)) {
-        result.error = {ServiceErrorCode::InvalidData,
-            "Editor text must be valid UTF-8 without embedded NUL bytes.", {}, false};
-        return result;
+    return impl_->ReplaceTextUnlocked(std::move(utf8Text));
+}
+
+ServiceResult<DocumentSnapshot> DocumentService::ReplaceTextIfCurrent(
+    DocumentId documentId, Revision revision, std::string utf8Text)
+{
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    if (impl_->snapshot.document_id != documentId ||
+        impl_->snapshot.revision != revision) {
+        return {{}, {ServiceErrorCode::Conflict,
+            "The document changed after this preview was created.",
+            impl_->snapshot.path, true}};
     }
-    std::string normalized = NormalizeNewlines(utf8Text);
-    if (impl_->snapshot.utf8_text != normalized) {
-        impl_->snapshot.utf8_text = std::move(normalized);
-        ReconcileLineEndings(&impl_->snapshot);
-        ++impl_->snapshot.revision;
-        impl_->snapshot.content_id = ContentId(impl_->snapshot);
-    }
-    result.value = impl_->snapshot;
-    return result;
+    return impl_->ReplaceTextUnlocked(std::move(utf8Text));
 }
 
 ServiceResult<DocumentSnapshot> DocumentService::SetEncoding(TextEncoding encoding)

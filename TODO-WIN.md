@@ -1329,6 +1329,12 @@ monitor windowの反復開閉を行って`underruns=0`、`dropped_frames=0`、ha
 SkipはPhase 6完了時に0へする。現行`ExportService`については実render中cancel、既存destination保護、progress、
 error時のpartial削除を追加検証した。GUI受入9項目は未実施である。
 
+**初回実装（2026-10-05）:** `TextTransformService`の4変換と条件付きApplyを実装した。
+N88行番号除去はTools menuに接続し、変換前後preview、Cancel、一回のUndo／Redoを提供する。
+Release／Debug／ASan+UBSan／TSanでGUI buildと全34 CTestを確認し、30 Pass／4 Skipとなった。
+GUI実操作での本文・選択範囲・dirty状態復元の受入は未確認であり、下記UI項目は未完了とする。
+G channel変換・tag追加・N88出力はservice実装済みで、GUI接続は後続作業である。
+
 - [ ] text transformをUIから分離し、previewとUndoを提供する
 - [ ] N88行番号除去、G channel変換、metadata tag追加
 - [ ] 使用FM voice定義の追記
