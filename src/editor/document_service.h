@@ -75,7 +75,8 @@ public:
         std::optional<TextEncoding> forcedEncoding = std::nullopt);
     ServiceResult<DocumentSnapshot> ReplaceText(std::string utf8Text);
     ServiceResult<DocumentSnapshot> ReplaceTextIfCurrent(
-        DocumentId documentId, Revision revision, std::string utf8Text);
+        DocumentId documentId, Revision revision, std::string utf8Text,
+        std::optional<std::vector<NewlineStyle>> lineEndings = std::nullopt);
     ServiceResult<DocumentSnapshot> SetEncoding(TextEncoding encoding);
     ServiceResult<DocumentSnapshot> SetNewlineStyle(NewlineStyle newline);
     ServiceResult<DocumentSnapshot> AssociateLocation(const std::string &path);

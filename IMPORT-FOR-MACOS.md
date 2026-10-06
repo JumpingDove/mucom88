@@ -25,7 +25,7 @@ CLI 移植とは別プロジェクト相当の作業になる。
 ## 2. 調査基準
 
 - 初期調査時点: 2026-09-12
-- 最終更新: 2026-10-05
+- 最終更新: 2026-10-06
 - 初期調査対象コミット: `bf008a4` (`trial-import-for-macOS`、調査時の HEAD)
 - 最新受入基準: `523c72e`を基点とする作業tree
 - 実機: Apple Silicon (`arm64`)、最新受入時macOS 27.0.1（初期移植時26.6.2）、Apple clang 21.0.0
@@ -856,8 +856,8 @@ ctest --test-dir build-debug --output-on-failure
 ```
 
 生成物は`build/mucom88`、`build/MUCOM88Editor.app`、`build/libmucom88_runtime.a`、test有効時は
-`build/tests/`以下のtest executableである。Phase 6の実装前contract追加後は全34 CTestが登録され、
-未実装serviceに対応する5件はSkipとなる。Phase 6完了時にはSkip 0が必要である。
+`build/tests/`以下のtest executableである。2026-10-06時点では全35 CTestが登録され、未実装serviceに
+対応する4件はSkipとなる。Phase 6完了時にはSkip 0が必要である。
 
 任意のprefixへinstallする場合は次のように指定する。macOSのinstall targetはCLI executableと
 `MUCOM88Editor.app`を含むが、`mucompcm.bin`、`voice.dat`、SDL2 dylibの配置はまだ自動化されていない。
@@ -902,7 +902,8 @@ ctest --test-dir build --output-on-failure
 | `phase5_playlist_policy_contract_test` | skip／loop／Next／Previous、単一Playing行、時間／比率policy、owner切替 |
 | `phase5_presentation_contract_test` | A～K表示、Idle clear、15 Hz throttle、immutable presentation |
 | `phase5_integration_contract_test` | Browser／Playlist／Editor owner、MUB export、shutdown lifetime |
-| `phase6_text_transform_contract_test` | N88行番号、G channel、tag、N88出力、preview／stale apply。service実装までSkip |
+| `phase6_text_transform_contract_test` | N88行番号、G channel、tag、N88出力、preview／stale apply。active |
+| `phase6_g_channel_contract_test` | G channel対象判定、引用・comment保護、encoding／改行、N88連続操作、実曲compile。active |
 | `phase6_voice_append_contract_test` | 使用FM voiceの重複除去、順序、preview／再適用。service実装までSkip |
 | `phase6_pcm_bank_contract_test` | DATA／VOICE、list／WAV／ADPCM、32件上限、path／error。service実装までSkip |
 | `phase6_format_validator_contract_test` | WAV／VGM／S98の独立構造検査と破損入力拒否。validator実装までSkip |
@@ -2038,3 +2039,44 @@ G channel変換、tag追加、N88出力のGUIとvoice追記、PCM bank、validat
 Release／Debug／ASan+UBSan／TSanでGUI buildと全34 CTestが成功し、30 Pass／4 Skipになった。
 text transform契約は有効化され、異なる文書、変更なし、不正UTF-8、apostrophe保持、tag値の改行拒否、
 同時Applyの競合も検証する。Phase 6全体の完了条件は引き続きSkip 0と実GUI受入である。
+
+## 29. Phase 6次優先項目: G channel変換の実装前test（2026-10-06）
+
+`GUI-TOOL-02`のGUI接続を次に優先する。既存`TextTransformService`で変換可能で、N88除去と同じpreview、
+document ID／revision確認、Undoの操作経路を共用できるためである。実装前に`phase6_g_channel_contract_test`を
+CTestへ追加し、`GCH-01`～`08`を`src/tests/phase6/README.md`に定義した。G以外のA～F／H～K、quoted text、
+comment、tag、非commandの`q`を保護し、UTF-8 BOM／CP932とLF／CRLF／CRの保存、N88除去との連続操作、
+no-op、stale preview、別document拒否を確認する。`sampl1.muc`の有効なG行の`@8`を`q8`へ置き換えた
+fixtureを変換して元曲へ戻し、PCM内蔵MUBへcompileできることも確認した。
+
+Release全suiteは35件中31 Pass／4 Skipで、専用testはDebug、ASan／UBSan、TSanでもPassした。
+GUIのOriginal／Preview、Cancel、Apply、Undo／Redo、選択範囲、2 window、preview中の編集競合は
+`tests/manual/macos-gui-acceptance.md`に手順を定義した。GUI入口の実装と実操作受入はまだ行っていない。
+
+## 30. G channel変換のGUI入口実装（2026-10-06）
+
+`build/MUCOM88Editor.app`のTools menuに「Convert G Channel q to @…」を追加した。
+N88行番号除去と同じ変換実行経路を共有し、Original／Preview、Cancel、条件付きApply、
+1回のUndo／Redoと操作名を提供する。既存N88操作のUndo名もこの共通経路で維持する。
+Release GUI buildと全35 CTestは31 Pass／4 Skip。Debug、ASan／UBSan、TSanでもGUI buildと
+`phase6_g_channel_contract_test`が成功した。
+
+実GUIで4行の未保存MUCを操作し、G行の数値付き`q`だけのpreview、Cancel時の本文不変、
+Apply後の本文、1回のUndo／Redoとその操作名を確認した。非対象行`A q3d`の選択もUndo後に復元された。
+保存済み文書のdirty状態、2 window、競合、N88からの連続操作、実GUI compileは未確認のため、
+`GUI-TOOL-02`の
+手動受入全体は継続する。詳細な結果と残項目は`tests/manual/macos-gui-acceptance.md`を参照。
+
+## 31. Phase 6次項目: metadata tag追加の実装前test（2026-10-06）
+
+`GUI-TOOL-03`を次に選択した。Windows GUIの7項目（title、composer、author、voice、pcm、date、
+comment）に対し、macOSでは既存tagを上書きせず、空欄を追加せず、Original／Previewと一回のUndoを
+提供する設計とした。`phase6_metadata_tag_contract_test`をCTestへ登録し、`TAG-01`～`08`の詳細と
+GUI受入条件を`src/tests/phase6/README.md`および`tests/manual/macos-gui-acceptance.md`に記載した。
+
+Release全36 CTestは31 Pass／4 Skip／1 Fail。専用testはDebug、ASan／UBSan、TSanでもbuildし、
+同じ2条件だけで失敗した。`#TITLE`しかない文書で小文字`#title`が追加されない点と、
+混在改行の文書にtag行を挿入すると元行の改行種別がずれる点で失敗する。原因はそれぞれ
+`TextTransformService`の大文字小文字を無視した既存tag判定と、`DocumentService`が改行種別を
+行indexだけで保持する方式にある。testは期待仕様として失敗のまま残し、次の実装でproduction側を
+修正する。metadata tagのGUI入口はまだ追加していない。

@@ -191,8 +191,8 @@ Phase 5以後のrelease候補を再受入するときは、少なくとも次の
 | ID | Scope | 予定自動試験 | 手動操作と期待結果 |
 |---|---|---|---|
 | `GUI-TOOL-01` | standard | `phase6_text_transform_contract_test`: N88行番号 | preview後に適用でき、Undo一回で本文・選択範囲・dirty状態が戻る |
-| `GUI-TOOL-02` | standard | `phase6_text_transform_contract_test`: G channel `q` | 他channel、tag、commentを変えず変換する |
-| `GUI-TOOL-03` | standard | `phase6_text_transform_contract_test`: tag | 欠落tagだけ追加し、既存・重複tagの規則を表示する |
+| `GUI-TOOL-02` | standard | `phase6_g_channel_contract_test`: G channel `q` | 他channel、tag、commentを変えず変換する |
+| `GUI-TOOL-03` | standard | `phase6_metadata_tag_contract_test`: tag、encoding、compile | 欠落tagだけ追加し、既存・重複tagの規則を表示する |
 | `GUI-TOOL-04` | standard | `phase6_voice_append_contract_test`: voice抽出 | 使用voiceだけを一度ずつ追記し、再compile・Undoできる |
 | `GUI-TOOL-05` | standard | `phase6_pcm_bank_contract_test`: DATA／VOICE | sourceからPCM bankを生成し、macOS版で再読込する |
 | `GUI-TOOL-06` | standard | `phase6_pcm_bank_contract_test`: list／WAV／ADPCM | 最大32 entryのbankを生成し、失敗fileとlist行を表示する |
@@ -205,6 +205,51 @@ Phase 5以後のrelease候補を再受入するときは、少なくとも次の
 Cancelで本文・revision・dirtyが変わらないこと、Applyで変換できること、Undo一回で本文・
 選択範囲・dirtyが戻り、Redoで再適用できることを確認する。保存済み／未保存の文書を両方確認する。
 番号なし行やapostrophe欠落の入力はerrorを表示し、本文を変更しない。実GUI evidenceは未取得である。
+
+`GUI-TOOL-02`の受入fixtureは、`G q1c ; q2`、`A q3d`、`G "q4" q5`、`#comment G q6`を含む
+UTF-8 MUCと、同じ本文を行番号で包んだN88を用意する。ToolsのG channel変換入口からOriginal／Previewを開き、
+Cancelで本文・選択範囲・dirty状態が不変、ApplyでGの`q1`と`q5`だけが`@`になり、Undo一回とRedo一回で
+本文・選択範囲・dirty状態が戻ることを確認する。番号付きN88は行番号除去を先に行う。2 windowで別文書へ
+誤適用しないこと、preview中の編集後にApplyが競合として拒否されること、変換後のcompile結果も記録する。
+自動部分は`phase6_g_channel_contract_test`の`GCH-01`～`08`で検証する。
+
+2026-10-06の実GUI確認: Releaseの`build/MUCOM88Editor.app`を起動し、未保存MUCへ上記4行を入力した。
+Tools → Convert G Channel q to @…を開くとOriginalとPreviewが表示され、Previewは
+`G @1c ; q2`、`A q3d`、`G "q4" @5`、`#comment G q6`だった。Cancelでは本文不変、
+再度開いてApplyするとPreviewと同じ本文になった。Edit menuのUndo名は
+`Convert G Channel q to @`で、1回のUndoで元の4行、1回のRedoで変換後の4行に戻った。
+さらに非対象行`A q3d`を選択してApply／Undoし、Undo後に同じ文字列の選択が復元された。
+保存済みMUC、dirty表示の復元、2 window、preview中の競合、N88からの連続操作、
+実GUIでのcompileは未確認。従って手動受入全体は未完了である。
+
+`GUI-TOOL-03`の実装前受入設計（2026-10-06）: 保存済みUTF-8 MUCに
+`#mucom88 1.5`、既存の`#title Existing`、MML本文を置き、`composer`、`author`、
+`voice`、`pcm`、`date`、`comment`は未設定にする。Toolsのtag追加画面では7項目を確認し、
+既存titleの非上書きを明示する。未入力欄はtag行を作らず、入力した欄だけを既存の先頭tag blockの後へ
+挿入する。Original／Previewを見てCancelすれば本文・選択・revision・dirtyが不変、Applyすれば
+一回のUndo／Redoで全追加行を戻し／再適用できることを確認する。同じ操作の2回目はno-opにする。
+`#TITLE`しかない別文書では小文字`#title`が新規追加されruntime metadataへ反映されること、
+CP932および混在改行の文書では保存後も文字コードと元行の改行種別を保持することを確認する。
+2 window間の誤適用とpreview後の編集競合を拒否し、番号付きN88では先に行番号を除去する。
+最後に`sampl1.muc`からcomposerだけを除いたfixtureへ再追加し、macOS版でcompileする。
+現時点ではGUI入口未実装であり、自動testは`TAG-03`と`TAG-06`の2条件で失敗する。
+
+`GUI-TOOL-03`の詳細ケース（2026-10-06、全件未実施）:
+
+| ID | 操作・fixture | 期待結果・記録する証拠 |
+|---|---|---|
+| `TAG-GUI-01` | 保存済みMUCで7欄を確認。titleは既存、composerだけ入力し、他欄は空欄 | 既存titleを変更せずcomposerだけ追加するpreview。date等を暗黙に生成しない。入力画面とpreviewを記録 |
+| `TAG-GUI-02` | 保存済み／dirty文書で文字列を選択。入力画面でCancel、別試行でpreviewからCancel | 本文・選択・dirty不変、Undo履歴にtoolを追加しない。model revisionの確認はTAG-09が担当 |
+| `TAG-GUI-03` | 保存済み文書に複数tagをApply、Undo一回、Redo一回 | Applyはdirty、Undoは元本文・元選択・clean、Redoは追加本文・dirty。menuのUndo名と各状態を記録 |
+| `TAG-GUI-04` | 元からdirtyな文書でApply／Undo／Redo、追加後に同じ入力で再実行 | Undoでも元の編集を残してdirty。再実行は本文不変でUndo操作を増やさない |
+| `TAG-GUI-05` | CRLF優勢の混在改行MUCとCP932日本語MUCでApply／Undo／Redo後にそれぞれ別pathへSave As | 各保存物のbytesを比較。Undo後は元encoding・BOM・全改行種別・末尾改行へ戻る。Redo後は追加行だけpreferred改行となる。元fixtureを上書きしない |
+| `TAG-GUI-06` | `#TITLE Upper`と小文字tag重複を含む文書で入力 | 大文字行を保持し小文字titleを追加。既存小文字tagとその重複行は全て保持し、最初の値がruntimeへ反映される |
+| `TAG-GUI-07` | 2文書を開き片方でpreview。別文書を編集。可能な経路で元文書のrevisionを変更してApply | 別文書へ適用しない。元文書の変更後はConflictで本文・設定を保持。modal sheetが元文書の編集を遮断する場合はその事実を記録し、競合はTAG-05／11で確認 |
+| `TAG-GUI-08` | 改行を含む値をpaste、番号付きN88で起動、全欄空欄で起動 | 不正値を適用しない。N88は先に行番号除去を案内。全欄空欄は本文・dirty・Undo履歴を変更しない |
+| `TAG-GUI-09` | `sampl1.muc`からcomposerだけ除いたcopyで入力→Apply→Save→再open→compile | 既存titleと再追加composerがmetadataに反映され、PCM内蔵MUBへcompile成功。保存物とcompile結果を記録 |
+
+自動テストはTAG-01～12へ拡張した。TAG-03、TAG-06、TAG-10の混在改行2fixtureが失敗し、
+他caseはPassする。GUIケースの設計はnative UI実行の証拠ではなく、受入完了には実操作が必要である。
 
 Phase 6の実装前contractは`src/tests/phase6/README.md`に記録する。save panel Cancelではoperationを開始せず、
 処理中Cancelでは既存destinationを維持して一時fileを残さない。生成したMUBはmacOS版で再読込・再生する。

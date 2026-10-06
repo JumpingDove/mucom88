@@ -1,16 +1,18 @@
 # Phase 6 contract tests
 
 Phase 6 adds text tools, a portable PCM bank builder, and general-purpose
-export UI. The six CTests below were registered before the new services were
+export UI. The original six CTests were registered before the new services were
 implemented. An absent activating header returns 77 and CTest reports Skip.
 Once a header is added, its test body compiles and runs. Phase 6 is not complete
 while any of its contract tests is skipped or failing.
 
-## Current status (2026-10-05)
+## Current status (2026-10-06)
 
 | CTest | Activating header | Current result |
 |---|---|---|
 | `phase6_text_transform_contract_test` | `editor/text_transform_service.h` | Pass |
+| `phase6_g_channel_contract_test` | existing text transform and document services | Pass |
+| `phase6_metadata_tag_contract_test` | text transform, metadata, document, and compiler services | Fail (2 known gaps) |
 | `phase6_voice_append_contract_test` | voice append and text transform headers | Skip |
 | `phase6_pcm_bank_contract_test` | `editor/pcm_bank_service.h` | Skip |
 | `phase6_format_validator_contract_test` | `editor/export_format_validator.h` | Skip |
@@ -20,12 +22,18 @@ while any of its contract tests is skipped or failing.
 Text transform service is implemented, including N88 removal, G-channel
 conversion, missing metadata insertion, and N88 export. Apply uses an atomic
 DocumentService document/revision check; unchanged text does not add a revision.
-The macOS Tools menu provides N88 removal with original/converted previews,
-Cancel, and a single Undo/Redo operation restoring the previous selection.
-Real GUI acceptance remains pending.
+The macOS Tools menu provides N88 removal and G-channel conversion with
+original/converted previews, Cancel, and a single Undo/Redo operation restoring
+the previous selection. The G-channel menu and preview/Cancel/Apply/Undo/Redo
+path have been exercised in the real GUI, including restoration of a selected
+non-G line. The remaining acceptance matrix (saved documents, dirty state,
+multiple windows, and conflict) is pending.
 
-Release, Debug, ASan/UBSan, and TSan: 34 registered, 30 passed, 4 skipped;
-GUI builds succeed in all four configurations. The four skipped executables
+Release has 36 registered: 31 passed, 4 skipped, and the new metadata-tag
+test failed on the two gaps described below. Its Debug, ASan/UBSan, and TSan
+runs fail on the same assertions, with no additional failures. The G-channel test passes
+in Release, Debug, ASan/UBSan, and TSan. The Phase 6 suite now has eight
+CTests. The four skipped executables
 still compile their fallback branches. The existing 28 Phase 0–5 tests remain
 active. Voice append, PCM bank, validator, and integration are not implemented.
 
@@ -53,9 +61,10 @@ The tests define the minimum platform-neutral surface for the new services:
 - `ArtifactValidator::Validate(bytes, ExportFormat, expectedFrames)` parses
   WAV, VGM, and S98 independently of their writers.
 
-These are contract choices for Phase 6 implementation; production APIs do not
-exist yet. If an API is deliberately redesigned, update the tests and this
-contract together, preserving the observable behaviors below.
+The text transform API exists. Voice append, PCM bank, and artifact validator
+remain contract choices for later implementation. If one of those APIs is
+deliberately redesigned, update its test and this contract together while
+preserving the observable behaviors below.
 
 ## Text transform coverage
 
@@ -76,6 +85,109 @@ contract together, preserving the observable behaviors below.
 The AppKit acceptance additionally checks that Apply is one native Undo/Redo
 step, preview cancellation leaves the document untouched, and selection/dirty
 state are restored by Undo. Those behaviors require a real editor UI run.
+
+### G-channel transform GUI entry (`GUI-TOOL-02`)
+
+The platform-neutral transformation and Tools action are implemented. The
+action uses the same preview, stale-revision check, single Undo step, and error
+presentation as N88 removal. No PCM bank, export writer, or new audio ownership
+is involved in this step.
+
+`phase6_g_channel_contract_test` is active now. Its cases form the automated
+part of the pre-implementation plan:
+
+| ID | Input or action | Required result |
+|---|---|---|
+| `GCH-01` | G with spaces/tabs and `q0`, `q-2`, `q+3`, `q4` | only eligible lower-case commands become `@` |
+| `GCH-02` | A–F, H–K, lower-case g, `Gmacro`, `Gq` | every non-G line remains byte-for-byte the same |
+| `GCH-03` | quoted `q`, semicolon comment, tag, upper-case Q, bare q, `qx` | protected/non-command text remains unchanged |
+| `GCH-04` | preview, Apply, second preview/Apply | preview is read-only; first Apply changes one revision and dirty state; second is a no-op |
+| `GCH-05` | mixed LF/CRLF/CR, UTF-8 BOM, CP932 Japanese comment | decoded text changes only at target commands; saved encoding and exact line endings remain |
+| `GCH-06` | numbered N88 source | direct G conversion is a no-op; remove numbers then convert changes only G commands |
+| `GCH-07` | stale preview and another document | Conflict is returned and both documents retain their current text |
+| `GCH-08` | replace one `@8` in the real `sampl1.muc` G line with `q8` | transformation restores the original source and it compiles with embedded PCM |
+
+The GUI acceptance part uses a saved `.muc`, a dirty `.muc`, and a numbered
+`.n88` with the same lines. Select some text before opening Tools → Convert G
+Channel q to @. Verify Original/Preview, then Cancel: text, selection,
+revision, and dirty indicator remain unchanged. Apply once and check the
+expected G lines; one Undo restores text, selection, and dirty state, and one
+Redo reapplies it. Repeat with two open editor windows to check that the
+preview is applied only to its source document. Edit the source while a
+preview is open and confirm Apply reports a conflict without overwriting the
+new edit. For `.n88`, remove line numbers first and then run this transform.
+Compile the converted MML with the macOS compiler and record the result. The
+automated compiler case uses a valid packaged song because a short synthetic
+G-channel line can omit driver parameters and fail for unrelated reasons.
+
+Passing the CTest alone does not mark `GUI-TOOL-02` complete. The menu action is
+present and the basic real-GUI flow passed on 2026-10-06, but the rest of the
+acceptance matrix above remains open. The GUI test uses the application's
+standard Undo manager; the C++ service cannot validate AppKit selection or Undo
+grouping.
+
+### Next priority: metadata-tag GUI entry (`GUI-TOOL-03`)
+
+This is the next implementation unit. Windows inserts `title`, `composer`,
+`author`, `voice`, `pcm`, `date`, and `comment`; the macOS metadata parser and
+compiler recognize the exact lower-case spellings. The UI should collect the
+missing fields, omit fields left empty, show existing canonical fields without
+overwriting them, and use the shared Original/Preview → Apply/Cancel → one
+Undo/Redo flow. It must not create empty tags implicitly. A numbered N88
+source must have its line numbers removed before this MUC-oriented operation.
+
+`phase6_metadata_tag_contract_test` is the platform-neutral pre-implementation
+contract. It has the following cases:
+
+| ID | Fixture or action | Required result |
+|---|---|---|
+| `TAG-01` | all seven canonical fields on a source with `#mucom88` | requested order after the leading tag block; parser reads every value, including Japanese text and paths with spaces |
+| `TAG-02` | existing first/duplicate tags and duplicate request keys | existing values win, first requested missing value wins, second Apply has no revision change |
+| `TAG-03` | upper-case `#TITLE` only | preserve it but add usable lower-case `#title`; runtime parser resolves the new value |
+| `TAG-04` | empty/invalid names, LF/CR/NUL or invalid UTF-8 in values | preview fails atomically and leaves document/revision unchanged; empty request is a no-op |
+| `TAG-05` | stale preview or another document | Conflict without overwriting either document |
+| `TAG-06` | UTF-8 BOM/CRLF, CP932/Japanese, mixed LF/CRLF/CR | preserve encoding and every original line ending; new line uses preferred ending |
+| `TAG-07` | leading tag without a final newline; numbered N88 composition | insert a separator and tags correctly; strip N88 numbers before tagging |
+| `TAG-08` | remove composer from packaged `sampl1.muc`, then re-add | existing title remains, compiler reports restored composer and emits PCM-bearing MUB |
+| `TAG-09` | saved/dirty document; discard preview; request only an existing title | text, encoded bytes, revision, saved revision/content ID, encoding, endings, path and dirty state remain unchanged |
+| `TAG-10` | two inserted tags; LF/CRLF/CR, mixed CRLF majority, mixed prepend, unterminated MML, empty source | exact encoded bytes and per-line ending vector match independently decoded expected bytes; existing endings stay attached to original lines; additions use the original preferred ending; one revision |
+| `TAG-11` | change encoding or newline style after preview | Apply returns Conflict and preserves the changed settings, text, encoded bytes, revision and dirty state |
+| `TAG-12` | two threads Apply the same changed preview | exactly one succeeds, the other returns Conflict; one title and one revision increment |
+
+Every case prints its TAG ID before running; the newline matrix also prints
+its fixture name. Cases continue after assertion failures so one failed
+behavior does not conceal later checks. These are active tests against the
+current public API, with no expected-failure flag or activating-header skip.
+No new preview/newline API is prescribed by these tests: the oracle is exact
+saved bytes and DocumentSnapshot state. Implementation may choose its API
+while preserving these observations.
+
+Extension run (2026-10-06): Release, Debug, ASan/UBSan and TSan build the test.
+TAG-03, TAG-06 and the mixed-CRLF/prepend-mixed fixtures of TAG-10 fail;
+all other cases pass. The failures remain the same two production gaps
+(case-sensitive canonical tag detection and line-ending relocation), with
+seven failed assertions in total. No production code was changed by this
+extension. Service-side preview discard is tested in TAG-09; it does not
+claim to test the native Cancel button or AppKit Undo.
+
+
+The first run on 2026-10-06 compiled but failed at `TAG-03` and the mixed
+newline subcase of `TAG-06`. `TextTransformService` currently folds tag names
+to lower case when detecting existing tags, whereas `MetadataService` only
+recognizes exact lower-case names. `DocumentService` keeps original newline
+styles by line index, so inserting a line into mixed-newline text shifts the
+styles of subsequent original lines. Keep these assertions red until both
+production behaviors are corrected in the next implementation turn; do not
+mask them as skipped or expected failures.
+
+The GUI acceptance uses a saved UTF-8 MUC with `#mucom88`, an existing title,
+missing composer/author/voice/pcm/date/comment, and a second CP932 or mixed-
+newline document. Check field collection and empty-field omission; original/
+preview and the rule that existing canonical tags win; Cancel preserving text,
+selection, revision, and dirty state; Apply as one Undo/Redo step; and that two
+windows cannot cross-apply. Check an upper-case-only tag is not mistaken for a
+runtime tag, N88 is stripped before use, and the resulting saved MUC compiles.
+The C++ contract cannot validate AppKit form defaults, selection, or Undo.
 
 ## Voice append coverage
 
@@ -118,7 +230,7 @@ compile, embedded PCM MUB export, WAV export, and structural validation.
 
 ## Completion gate
 
-All six Phase 6 tests must be active and pass with the existing suite in
+All eight Phase 6 tests must be active and pass with the existing suite in
 Release, Debug, ASan/UBSan, and TSan. The nine `GUI-TOOL`/`GUI-EXPORT` items in
 `tests/manual/macos-gui-acceptance.md` must have real GUI evidence, including
 Undo/Redo, save panel cancellation, progress cancellation, and errors. No

@@ -10,7 +10,7 @@ native applicationとして完成させる。本書でいう機能同等化は�
 
 方針更新日: 2026-09-23
 
-進捗更新日: 2026-10-05
+進捗更新日: 2026-10-06
 
 ## 運用ルール
 
@@ -1335,6 +1335,36 @@ Release／Debug／ASan+UBSan／TSanでGUI buildと全34 CTestを確認し、30 P
 GUI実操作での本文・選択範囲・dirty状態復元の受入は未確認であり、下記UI項目は未完了とする。
 G channel変換・tag追加・N88出力はservice実装済みで、GUI接続は後続作業である。
 
+**次の優先項目と実装前test（2026-10-06）:** `GUI-TOOL-02`のG channel変換GUI入口を選択した。
+既存serviceとN88除去のpreview／Undo経路を使えるため、他のPhase 6 toolより依存が少ない。
+専用の`phase6_g_channel_contract_test`を追加し、対象channel、数値付き`q`、引用部／comment保護、
+LF／CRLF／CR・UTF-8 BOM・CP932保存、N88除去との連続操作、no-op、stale preview、別document拒否を固定した。
+`sampl1.muc`の有効なG行を逆変換したfixtureで、変換結果が元曲と一致してPCM内蔵MUBへcompileできることも確認した。
+GUIのCancel／Apply／Undo／Redo、選択範囲、2 window、compileを含む受入手順は
+`src/tests/phase6/README.md`と`tests/manual/macos-gui-acceptance.md`に記載した。
+GUI入口はTools menuに実装し、基本的な実GUI操作とUndo後の選択範囲復元は確認した。保存済み文書のdirty状態、
+2 window、競合、N88からの連続操作、実GUI compileの受入は残るため、`GUI-TOOL-02`は未完了である。
+Releaseの全35 CTestは31 Pass／4 Skip、専用testはDebug／ASan+UBSan／TSanでもPassした。
+
+**次の実装項目のtest設計・追加（2026-10-06）:** `GUI-TOOL-03` metadata tag追加を選択した。
+Windowsの7項目（title、composer、author、voice、pcm、date、comment）とmacOSの既存
+`TextTransformService`／`MetadataService`を使えるため、PCM bank等の未実装serviceに依存しない。
+`phase6_metadata_tag_contract_test`を追加し、`TAG-01`～`08`で既存tag優先、重複、入力検証、
+preview／no-op／stale拒否、UTF-8 BOM／CP932／混在改行、N88除去との連続操作、
+`sampl1.muc`の再compileを固定した。手動GUI受入は`tests/manual/macos-gui-acceptance.md`に定義した。
+Releaseで全36 CTestは31 Pass／4 Skip／1 Fail。新CTestはDebug／ASan+UBSan／TSanでもbuildし、
+同じ`TAG-03`の大文字tagと`TAG-06`の混在改行保持だけで失敗した。
+前者は変換serviceが大文字tagを既存扱いする一方でruntime parserは小文字だけを認識する不一致、
+後者は行追加後もDocumentServiceが元の改行種別を行indexのまま再利用するためである。
+GUI入口実装と合わせてこの2点を修正し、専用testをPassさせる。現時点で`GUI-TOOL-03`は未完了。
+
+**metadata test詳細化（2026-10-06）:** 自動caseをTAG-01～12へ拡張し、preview破棄、
+保存済み／dirty no-op、7種の改行・挿入位置fixture、設定変更後のConflict、同時Applyを追加した。
+4構成でbuild／実行し、TAG-03／06／10の計7 assertionが既知の2不具合で失敗する。他caseはPass。
+TAG-GUI-01～09で入力欄、Cancel、Undo／Redo、保存bytes、2文書、N88、再compileを設計した。
+production codeは変更せず、手動GUI caseは未実施である。詳細はPhase 6 READMEとGUI受入文書を参照。
+
+
 - [ ] text transformをUIから分離し、previewとUndoを提供する
 - [ ] N88行番号除去、G channel変換、metadata tag追加
 - [ ] 使用FM voice定義の追記
@@ -1462,3 +1492,7 @@ Windows CLI比較は先行条件にしない。
 | 2026-10-04 | Phase 5 5-5完了 | 実CoreAudioでHome、MUB export、playlist skip／loop／policy、owner競合、monitor 20回開閉を受入。split pane、Idle残値、複数Playing行を修正 | 4構成で各28 CTest成功、Skip 0。System Defaultでunderrun／drop／refill 0、hangなし。Phase 5の12 GUI項目を完了 |
 | 2026-10-04 | 文書整合性更新 | Phase 3～5の完了状態、28 CTest、GUI build／起動、Phase 5 contractの追加不変条件を全Markdownへ反映 | staleなbrowser／transport／playlist未実装表記を解消し、Phase 6を次作業として統一 |
 | 2026-10-05 | Phase 6実装前test追加 | text transform、voice追記、PCM bank、独立format parser、export operation、結合の6契約をCTestへ登録 | Releaseで全34件中29 Pass／5 Skip。Phase 6の6件はDebug／ASan+UBSan／TSanでもbuildし、activeなexport試験は全4構成でPass。5 Skipは対応service実装までの予定状態 |
+| 2026-10-05 | Phase 6 text transform初回実装 | 4変換のserviceとN88行番号除去のpreview／Undo GUIを追加 | Release／Debug／ASan+UBSan／TSanで全34 CTest中30 Pass／4 Skip。`GUI-TOOL-01`の実GUI受入は未実施 |
+| 2026-10-06 | 次優先項目のtest追加 | `GUI-TOOL-02` G channel変換を選択し、8ケースの専用CTestとGUI受入手順を追加 | Release全35件中31 Pass／4 Skip。専用testはDebug／ASan+UBSan／TSanでもPass。GUI入口と実操作受入は未実施 |
+| 2026-10-06 | `GUI-TOOL-02` GUI入口実装 | Tools menuのG channel変換をN88と共通のpreview／Apply／Undo経路へ接続 | Release全35件中31 Pass／4 Skip。Debug／ASan+UBSan／TSanでGUI buildと専用CTest成功。実GUIで4行のpreview、Cancel、Apply、Undo／Redoを確認。手動受入の残項目は継続 |
+| 2026-10-06 | 次実装項目のtest追加 | `GUI-TOOL-03`を選択し、metadata tagの8ケースと手動GUI受入を設計・登録 | 専用CTestはbuild成功、`TAG-03`大文字tagと`TAG-06`混在改行の2条件でFail。次のproduction実装で修正する。GUI入口は未実装 |

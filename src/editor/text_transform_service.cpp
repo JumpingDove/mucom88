@@ -1,9 +1,9 @@
 #include "editor/text_transform_service.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <set>
-#include <string_view>
 
 namespace mucom88 {
 namespace {
@@ -14,12 +14,6 @@ bool TagCharacter(char c)
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
         Digit(c) || c == '_';
 }
-std::string TagKey(std::string_view key)
-{
-    std::string result(key);
-    for (char &c : result) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
-    return result;
-}
 } // namespace
 
 ServiceResult<TextTransformPreview> TextTransformService::Preview(
@@ -29,7 +23,7 @@ ServiceResult<TextTransformPreview> TextTransformService::Preview(
     DocumentService validation;
     const auto valid = validation.ReplaceText(source.utf8_text);
     if (!valid.Succeeded()) return {{}, valid.error};
-    TextTransformPreview preview{source.document_id, source.revision, {}};
+    TextTransformPreview preview{source.document_id, source.revision, {}, source.line_endings};
     auto fail = [&](const char *message) -> ServiceResult<TextTransformPreview> {
         return {{}, {ServiceErrorCode::InvalidData, message, source.path, true}};
     };
@@ -79,12 +73,12 @@ ServiceResult<TextTransformPreview> TextTransformService::Preview(
             }
             break;
         case TextTransformKind::AddMetadataTags:
-            if (first != std::string::npos && line[first] == '#') {
+            // Runtime tags start in column zero and have case-sensitive names.
+            if (first == 0 && line[first] == '#') {
                 std::size_t cursor = first + 1;
                 while (cursor < line.size() && TagCharacter(line[cursor])) ++cursor;
                 if (cursor == line.size() || Space(line[cursor]))
-                    existingTags.insert(TagKey(std::string_view(line).substr(
-                        first + 1, cursor - first - 1)));
+                    existingTags.insert(line.substr(first + 1, cursor - first - 1));
             }
             break;
         case TextTransformKind::ExportN88Basic:
@@ -109,7 +103,7 @@ ServiceResult<TextTransformPreview> TextTransformService::Preview(
                 return fail("Metadata tags require a valid name and a single-line value.");
             const auto valueValid = validation.ReplaceText(tag.second);
             if (!valueValid.Succeeded()) return {{}, valueValid.error};
-            if (existingTags.insert(TagKey(tag.first)).second)
+            if (existingTags.insert(tag.first).second)
                 additions += "#" + tag.first + " " + tag.second + "\n";
         }
         if (!additions.empty()) {
@@ -127,6 +121,16 @@ ServiceResult<TextTransformPreview> TextTransformService::Preview(
                 }
                 insert = end + 1;
             }
+            const auto addedLines = static_cast<std::size_t>(std::count(
+                additions.begin(), additions.end(), '\n'));
+            const auto insertionLine = static_cast<std::size_t>(std::count(
+                preview.utf8_text.begin(), preview.utf8_text.begin() + insert, '\n'));
+            // An unterminated leading tag block gained a separator above.
+            preview.line_endings->resize(static_cast<std::size_t>(std::count(
+                preview.utf8_text.begin(), preview.utf8_text.end(), '\n')),
+                source.preferred_newline);
+            preview.line_endings->insert(preview.line_endings->begin() + insertionLine,
+                addedLines, source.preferred_newline);
             preview.utf8_text.insert(insert, additions);
         }
     }
@@ -137,6 +141,6 @@ ServiceResult<DocumentSnapshot> TextTransformService::Apply(
     DocumentService &document, const TextTransformPreview &preview) const
 {
     return document.ReplaceTextIfCurrent(preview.document_id, preview.revision,
-        preview.utf8_text);
+        preview.utf8_text, preview.line_endings);
 }
 } // namespace mucom88

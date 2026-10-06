@@ -402,7 +402,8 @@ public:
         return result;
     }
 
-    ServiceResult<DocumentSnapshot> ReplaceTextUnlocked(std::string utf8Text)
+    ServiceResult<DocumentSnapshot> ReplaceTextUnlocked(std::string utf8Text,
+        std::optional<std::vector<NewlineStyle>> lineEndings = std::nullopt)
     {
         ServiceResult<DocumentSnapshot> result;
         if (ContainsNul(utf8Text) || !IsStrictUtf8(utf8Text)) {
@@ -411,8 +412,20 @@ public:
             return result;
         }
         std::string normalized = NormalizeNewlines(utf8Text);
-        if (snapshot.utf8_text != normalized) {
+        if (lineEndings.has_value()) {
+            if (lineEndings->size() != static_cast<std::size_t>(std::count(
+                    normalized.begin(), normalized.end(), '\n')) ||
+                std::any_of(lineEndings->begin(), lineEndings->end(),
+                    [](NewlineStyle value) { return value != NewlineStyle::Lf &&
+                        value != NewlineStyle::CrLf && value != NewlineStyle::Cr; })) {
+                return {{}, {ServiceErrorCode::InvalidData,
+                    "Invalid line endings for transformed text.", snapshot.path, true}};
+            }
+        }
+        if (snapshot.utf8_text != normalized ||
+            (lineEndings.has_value() && snapshot.line_endings != *lineEndings)) {
             snapshot.utf8_text = std::move(normalized);
+            if (lineEndings.has_value()) snapshot.line_endings = std::move(*lineEndings);
             ReconcileLineEndings(&snapshot);
             ++snapshot.revision;
             snapshot.content_id = ContentId(snapshot);
@@ -469,7 +482,8 @@ ServiceResult<DocumentSnapshot> DocumentService::ReplaceText(std::string utf8Tex
 }
 
 ServiceResult<DocumentSnapshot> DocumentService::ReplaceTextIfCurrent(
-    DocumentId documentId, Revision revision, std::string utf8Text)
+    DocumentId documentId, Revision revision, std::string utf8Text,
+    std::optional<std::vector<NewlineStyle>> lineEndings)
 {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     if (impl_->snapshot.document_id != documentId ||
@@ -478,7 +492,7 @@ ServiceResult<DocumentSnapshot> DocumentService::ReplaceTextIfCurrent(
             "The document changed after this preview was created.",
             impl_->snapshot.path, true}};
     }
-    return impl_->ReplaceTextUnlocked(std::move(utf8Text));
+    return impl_->ReplaceTextUnlocked(std::move(utf8Text), std::move(lineEndings));
 }
 
 ServiceResult<DocumentSnapshot> DocumentService::SetEncoding(TextEncoding encoding)

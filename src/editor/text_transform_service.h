@@ -21,6 +21,7 @@ struct TextTransformPreview {
     DocumentId document_id = 0;
     Revision revision = 0;
     std::string utf8_text;
+    std::optional<std::vector<NewlineStyle>> line_endings;
 };
 
 class TextTransformService {

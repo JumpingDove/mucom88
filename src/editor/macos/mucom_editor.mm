@@ -15,6 +15,7 @@
 #include "editor/application_services.h"
 #include "editor/document_service.h"
 #include "editor/text_transform_service.h"
+#include "editor/song_metadata.h"
 #include "editor/editor_command.h"
 #include "editor/recovery_service.h"
 
@@ -423,7 +424,14 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
 - (void)refreshAudioDevices:(BOOL)force;
 - (mucom88::CompileRequest)configuredCompileRequest;
 - (IBAction)removeN88LineNumbers:(id)sender;
-- (void)replaceToolText:(NSString *)text selection:(NSRange)selection;
+- (IBAction)convertGChannel:(id)sender;
+- (void)runTextTransform:(mucom88::TextTransformKind)kind
+    title:(NSString *)title;
+- (IBAction)addMetadataTags:(id)sender;
+- (void)previewTextTransform:(const mucom88::TextTransformRequest &)request
+    source:(const mucom88::DocumentSnapshot &)source title:(NSString *)title;
+- (void)applyToolPreview:(const mucom88::TextTransformPreview &)preview
+    selection:(NSRange)selection actionName:(NSString *)actionName;
 - (IBAction)goToLine:(id)sender;
 - (IBAction)changeEncoding:(id)sender;
 - (BOOL)restoreRecoveryAtPath:(NSString *)path error:(NSError **)error;
@@ -820,17 +828,29 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     [_editorView.window makeFirstResponder:_editorView];
 }
 
-- (void)replaceToolText:(NSString *)text selection:(NSRange)selection
+- (void)applyToolPreview:(const mucom88::TextTransformPreview &)preview
+    selection:(NSRange)selection actionName:(NSString *)actionName
 {
-    NSString *previous = [_editorView.string copy];
-    NSRange previousSelection = _editorView.selectedRange;
+    const auto previous = _model->Snapshot();
+    const auto applied = mucom88::TextTransformService().Apply(*_model, preview);
+    if (!applied.Succeeded()) {
+        NSError *error = nil;
+        SetError(&error, 3, StringFromUtf8(applied.error.message));
+        [self presentError:error];
+        return;
+    }
+    if (previous.content_id == applied.value.content_id) return;
+    const NSRange previousSelection = _editorView.selectedRange;
     [self.undoManager registerUndoWithTarget:self handler:^(MucomDocument *target) {
-        [target replaceToolText:previous selection:previousSelection];
+        const auto current = target->_model->Snapshot();
+        mucom88::TextTransformPreview inverse{previous.document_id, current.revision,
+            previous.utf8_text, previous.line_endings};
+        [target applyToolPreview:inverse selection:previousSelection actionName:actionName];
     }];
-    [self.undoManager setActionName:@"Remove N88 Line Numbers"];
+    [self.undoManager setActionName:actionName];
     _updatingEditor = YES;
     [_editorView.textStorage replaceCharactersInRange:
-        NSMakeRange(0, _editorView.string.length) withString:text];
+        NSMakeRange(0, _editorView.string.length) withString:StringFromUtf8(applied.value.utf8_text)];
     ApplyEditorTextAppearance(_editorView);
     selection.location = std::min(selection.location, _editorView.string.length);
     selection.length = std::min(selection.length,
@@ -840,7 +860,7 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     [_editorView didChangeText];
 }
 
-- (IBAction)removeN88LineNumbers:(id)sender
+- (IBAction)addMetadataTags:(id)sender
 {
     (void)sender;
     NSError *error = nil;
@@ -848,21 +868,123 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
         [self presentError:error];
         return;
     }
-    mucom88::TextTransformService service;
-    mucom88::TextTransformRequest request;
-    request.kind = mucom88::TextTransformKind::RemoveN88LineNumbers;
     const auto source = _model->Snapshot();
-    const auto result = service.Preview(source, request);
+    // File kind remains N88 after removing numbers; inspect the source itself.
+    const auto first = source.utf8_text.find_first_not_of(" \t\n");
+    if (first != std::string::npos && source.utf8_text[first] >= '0' &&
+        source.utf8_text[first] <= '9') {
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.messageText = @"Remove N88 Line Numbers First";
+        alert.informativeText = @"Use Tools → Remove N88 Line Numbers before adding metadata tags.";
+        [alert beginSheetModalForWindow:_editorView.window completionHandler:nil];
+        return;
+    }
+    const auto parsed = mucom88::MetadataService().ParseUtf8(source.utf8_text);
+    if (!parsed.Succeeded()) {
+        SetError(&error, 4, StringFromUtf8(parsed.error.message));
+        [self presentError:error];
+        return;
+    }
+    const std::string keys[] = {"title", "composer", "author", "voice", "pcm", "date", "comment"};
+    const std::string values[] = {parsed.value.title, parsed.value.composer,
+        parsed.value.author, parsed.value.voice, parsed.value.pcm,
+        parsed.value.date, parsed.value.comment};
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.messageText = @"Add Metadata Tags";
+    alert.informativeText = @"Existing lowercase tags are kept. Leave missing fields empty to omit them.";
+    [alert addButtonWithTitle:@"Preview"];
+    [alert addButtonWithTitle:@"Cancel"];
+    NSView *container = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 520, 245)];
+    NSMutableArray<NSTextField *> *fields = [NSMutableArray array];
+    for (int index = 0; index < 7; ++index) {
+        const CGFloat y = (6 - index) * 35;
+        NSTextField *label = [NSTextField labelWithString:StringFromUtf8(keys[index])];
+        label.frame = NSMakeRect(0, y, 90, 24);
+        [container addSubview:label];
+        NSTextField *field = [[NSTextField alloc] initWithFrame:NSMakeRect(95, y, 420, 24)];
+        field.stringValue = StringFromUtf8(values[index]);
+        // An empty canonical tag is still an existing tag and must be preserved.
+        bool exists = false;
+        const std::string prefix = "#" + keys[index];
+        for (std::size_t at = 0; at < source.utf8_text.size();) {
+            const auto end = source.utf8_text.find('\n', at);
+            const auto length = end == std::string::npos ? source.utf8_text.size() - at : end - at;
+            if (source.utf8_text.compare(at, prefix.size(), prefix) == 0 &&
+                (length == prefix.size() || (length > prefix.size() &&
+                    (source.utf8_text[at + prefix.size()] == ' ' ||
+                        source.utf8_text[at + prefix.size()] == '\t')))) exists = true;
+            at = end == std::string::npos ? source.utf8_text.size() : end + 1;
+        }
+        field.enabled = !exists;
+        if (exists) field.toolTip = @"Existing tag is preserved.";
+        [fields addObject:field];
+        [container addSubview:field];
+    }
+    alert.accessoryView = container;
+    [alert beginSheetModalForWindow:_editorView.window completionHandler:^(NSModalResponse response) {
+        if (response != NSAlertFirstButtonReturn) return;
+        mucom88::TextTransformRequest request;
+        request.kind = mucom88::TextTransformKind::AddMetadataTags;
+        const char *names[] = {"title", "composer", "author", "voice", "pcm", "date", "comment"};
+        for (NSUInteger index = 0; index < fields.count; ++index) {
+            NSTextField *field = fields[index];
+            if (!field.enabled || field.stringValue.length == 0) continue;
+            NSData *data = [field.stringValue dataUsingEncoding:NSUTF8StringEncoding];
+            if (data == nil) {
+                NSError *valueError = nil;
+                SetError(&valueError, 5, @"Metadata must be valid UTF-8.");
+                [self presentError:valueError];
+                return;
+            }
+            request.metadata_tags.emplace_back(names[index], std::string(
+                static_cast<const char *>(data.bytes), data.length));
+        }
+        // Keep the revision captured before input, so edits cannot cross-apply.
+        [self previewTextTransform:request source:source title:@"Add Metadata Tags"];
+    }];
+}
+
+- (IBAction)removeN88LineNumbers:(id)sender
+{
+    (void)sender;
+    [self runTextTransform:mucom88::TextTransformKind::RemoveN88LineNumbers
+        title:@"Remove N88 Line Numbers"];
+}
+
+- (IBAction)convertGChannel:(id)sender
+{
+    (void)sender;
+    [self runTextTransform:mucom88::TextTransformKind::ConvertGChannelQ
+        title:@"Convert G Channel q to @"];
+}
+
+- (void)runTextTransform:(mucom88::TextTransformKind)kind
+    title:(NSString *)title
+{
+    NSError *error = nil;
+    if (![self syncModelFromEditor:&error]) {
+        [self presentError:error];
+        return;
+    }
+    mucom88::TextTransformRequest request;
+    request.kind = kind;
+    [self previewTextTransform:request source:_model->Snapshot() title:title];
+}
+
+- (void)previewTextTransform:(const mucom88::TextTransformRequest &)request
+    source:(const mucom88::DocumentSnapshot &)source title:(NSString *)title
+{
+    const auto result = mucom88::TextTransformService().Preview(source, request);
     if (!result.Succeeded()) {
         NSAlert *alert = [[NSAlert alloc] init];
-        alert.messageText = @"Cannot Remove N88 Line Numbers";
+        alert.messageText = [@"Cannot " stringByAppendingString:title];
         alert.informativeText = StringFromUtf8(result.error.message);
         [alert beginSheetModalForWindow:_editorView.window completionHandler:nil];
         return;
     }
     const auto preview = result.value;
     NSAlert *alert = [[NSAlert alloc] init];
-    alert.messageText = @"Remove N88 Line Numbers";
+    alert.messageText = title;
     alert.informativeText = @"Review the original and converted source before applying.";
     [alert addButtonWithTitle:@"Apply"];
     [alert addButtonWithTitle:@"Cancel"];
@@ -888,19 +1010,9 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     [alert beginSheetModalForWindow:_editorView.window
         completionHandler:^(NSModalResponse response) {
         if (response != NSAlertFirstButtonReturn) return;
-        mucom88::TextTransformService transform;
-        const auto applied = transform.Apply(*self->_model, preview);
-        if (!applied.Succeeded()) {
-            NSError *applyError = nil;
-            SetError(&applyError, 3, StringFromUtf8(applied.error.message));
-            [self presentError:applyError];
-            return;
-        }
-        if (source.utf8_text == preview.utf8_text) return;
         [self->_editorView breakUndoCoalescing];
         [self.undoManager beginUndoGrouping];
-        [self replaceToolText:StringFromUtf8(preview.utf8_text)
-            selection:NSMakeRange(0, 0)];
+        [self applyToolPreview:preview selection:NSMakeRange(0, 0) actionName:title];
         [self.undoManager endUndoGrouping];
         [self->_editorView breakUndoCoalescing];
     }];
@@ -1367,7 +1479,9 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
         return mucom88::IsEditorCommandEnabled(
             mucom88::EditorCommand::Compile, state);
     }
-    if (item.action == @selector(removeN88LineNumbers:)) {
+    if (item.action == @selector(removeN88LineNumbers:) ||
+        item.action == @selector(convertGChannel:) ||
+        item.action == @selector(addMetadataTags:)) {
         return _editorView != nil && _editorView.window.attachedSheet == nil;
     }
     if (item.action == @selector(goToLine:)) {
@@ -1538,6 +1652,10 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     toolsItem.submenu = toolsMenu;
     AddMenuItem(toolsMenu, @"Remove N88 Line Numbers…",
         @selector(removeN88LineNumbers:), @"");
+    AddMenuItem(toolsMenu, @"Convert G Channel q to @…",
+        @selector(convertGChannel:), @"");
+
+    AddMenuItem(toolsMenu, @"Add Metadata Tags…", @selector(addMetadataTags:), @"");
 
     NSMenuItem *formatItem = [[NSMenuItem alloc] init];
     [mainMenu addItem:formatItem];
