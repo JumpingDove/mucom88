@@ -348,9 +348,17 @@ public:
         song->source_path = request.source_path;
         song->resource_directory = resourceDirectory;
         song->resources = resources;
+        song->resolved_voice_bank_path = ResolvePath(voiceTag.empty()
+            ? (resources.default_voice_file.empty() ? "voice.dat" : resources.default_voice_file)
+            : voiceTag, resourceDirectory);
         if (song->mub_bytes.size() >= sizeof(MUBHED)) {
             int pcmSize = 0;
             auto *header = reinterpret_cast<MUBHED *>(song->mub_bytes.data());
+            if (runtime.MUBValidate(header, static_cast<int>(song->mub_bytes.size())) &&
+                header->ext_fmvoice_num >= 0 && header->ext_fmvoice_num <= MUCOM_FMVOICE_MAX) {
+                for (int i = 0; i < header->ext_fmvoice_num; ++i)
+                    song->used_voice_numbers.push_back((int(header->ext_fmvoice[i]) + 255) & 255);
+            }
             song->has_embedded_pcm = runtime.MUBValidate(header,
                     static_cast<int>(song->mub_bytes.size())) &&
                 runtime.MUBGetPCMData(header, pcmSize) != nullptr && pcmSize > 0;

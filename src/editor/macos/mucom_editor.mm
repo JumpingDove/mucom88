@@ -17,6 +17,7 @@
 #include "editor/document_service.h"
 #include "editor/text_transform_service.h"
 #include "editor/n88_export_service.h"
+#include "editor/voice_append_service.h"
 #include "editor/song_metadata.h"
 #include "editor/editor_command.h"
 #include "editor/recovery_service.h"
@@ -429,6 +430,9 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
 - (IBAction)convertGChannel:(id)sender;
 - (void)runTextTransform:(mucom88::TextTransformKind)kind
     title:(NSString *)title;
+- (IBAction)appendUsedVoices:(id)sender;
+- (void)showToolPreview:(const mucom88::TextTransformPreview &)preview
+    source:(const mucom88::DocumentSnapshot &)source title:(NSString *)title;
 - (IBAction)exportN88Source:(id)sender;
 - (IBAction)addMetadataTags:(id)sender;
 - (void)previewTextTransform:(const mucom88::TextTransformRequest &)request
@@ -988,7 +992,14 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
         [alert beginSheetModalForWindow:_editorView.window completionHandler:nil];
         return;
     }
-    const auto preview = result.value;
+    [self showToolPreview:result.value source:source title:title];
+}
+
+- (void)showToolPreview:(const mucom88::TextTransformPreview &)requestedPreview
+    source:(const mucom88::DocumentSnapshot &)source title:(NSString *)title
+{
+    // The sheet outlives the caller, including asynchronous compiler completion.
+    const auto preview = requestedPreview;
     NSAlert *alert = [[NSAlert alloc] init];
     alert.messageText = title;
     alert.informativeText = @"Review the original and converted source before applying.";
@@ -1017,12 +1028,51 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
         completionHandler:^(NSModalResponse response) {
         [self->_editorView.window makeFirstResponder:self->_editorView];
         if (response != NSAlertFirstButtonReturn) return;
+        const auto current = self->_model->Snapshot();
+        if (current.document_id == preview.document_id && current.revision == preview.revision &&
+            current.utf8_text == preview.utf8_text &&
+            (!preview.line_endings || current.line_endings == *preview.line_endings)) return;
         [self->_editorView breakUndoCoalescing];
         [self.undoManager beginUndoGrouping];
         [self applyToolPreview:preview selection:NSMakeRange(0, 0) actionName:title];
         [self.undoManager endUndoGrouping];
         [self->_editorView breakUndoCoalescing];
     }];
+}
+
+- (IBAction)appendUsedVoices:(id)sender
+{
+    (void)sender;
+    NSError *error = nil;
+    if (![self syncModelFromEditor:&error]) { [self presentError:error]; return; }
+    const auto source = _model->Snapshot();
+    _compileOperation.Cancel();
+    _statusLabel.stringValue = @"Compiling for voice append…";
+    __weak MucomDocument *weakSelf = self;
+    _compileOperation = _services->compiler->CompileAsync([self configuredCompileRequest],
+        [weakSelf, source](mucom88::CompileResult result) {
+            MucomDocument *document = weakSelf;
+            if (document == nil || result.error.code == mucom88::ServiceErrorCode::Cancelled) return;
+            const auto current = document->_model->Snapshot();
+            if (current.document_id != source.document_id || current.revision != source.revision ||
+                document->_editorView.window.attachedSheet != nil) return;
+            [document showCompileResult:result];
+            if (!result.Succeeded()) { document->_statusLabel.stringValue = @"Compile failed"; return; }
+            mucom88::VoiceService voices;
+            const auto bank = voices.Load(result.song->resolved_voice_bank_path);
+            mucom88::ServiceResult<mucom88::TextTransformPreview> preview;
+            if (bank.Succeeded()) preview = mucom88::VoiceAppendService().Preview(source, *result.song, bank.value);
+            else preview.error = bank.error;
+            document->_statusLabel.stringValue = preview.Succeeded() ? @"Voice preview ready" : @"Voice append failed";
+            if (!preview.Succeeded()) {
+                NSAlert *alert = [[NSAlert alloc] init];
+                alert.messageText = @"Cannot Append Used FM Voices";
+                alert.informativeText = StringFromUtf8(preview.error.message);
+                [alert beginSheetModalForWindow:document->_editorView.window completionHandler:nil];
+                return;
+            }
+            [document showToolPreview:preview.value source:source title:@"Append Used FM Voices"];
+        });
 }
 
 - (IBAction)exportN88Source:(id)sender
@@ -1572,6 +1622,8 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
         return mucom88::IsEditorCommandEnabled(
             mucom88::EditorCommand::Compile, state);
     }
+    if (item.action == @selector(appendUsedVoices:))
+        return state.compiler_ready && _editorView != nil && _editorView.window.attachedSheet == nil;
     if (item.action == @selector(removeN88LineNumbers:) ||
         item.action == @selector(convertGChannel:) ||
         item.action == @selector(addMetadataTags:) ||
@@ -1750,6 +1802,7 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
         @selector(convertGChannel:), @"");
 
     AddMenuItem(toolsMenu, @"Add Metadata Tags…", @selector(addMetadataTags:), @"");
+    AddMenuItem(toolsMenu, @"Append Used FM Voices…", @selector(appendUsedVoices:), @"");
     AddMenuItem(toolsMenu, @"Export N88-BASIC Source…", @selector(exportN88Source:), @"");
 
     NSMenuItem *formatItem = [[NSMenuItem alloc] init];

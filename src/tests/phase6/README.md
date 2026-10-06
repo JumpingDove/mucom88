@@ -14,7 +14,8 @@ while any of its contract tests is skipped or failing.
 | `phase6_g_channel_contract_test` | existing text transform and document services | Pass |
 | `phase6_metadata_tag_contract_test` | text transform, metadata, document, and compiler services | Pass |
 | `phase6_n88_export_contract_test` | N88 export, text transform, document, and compiler services | Pass |
-| `phase6_voice_append_contract_test` | voice append and text transform headers | Skip |
+| `phase6_voice_usage_contract_test` | existing compiler service; owned usage field | Pass |
+| `phase6_voice_append_contract_test` | voice append and text transform headers | Pass |
 | `phase6_pcm_bank_contract_test` | `editor/pcm_bank_service.h` | Skip |
 | `phase6_format_validator_contract_test` | `editor/export_format_validator.h` | Skip |
 | `phase6_export_operation_test` | existing `editor/export_service.h` | Pass |
@@ -30,26 +31,10 @@ path have been exercised in the real GUI, including restoration of a selected
 non-G line. The remaining acceptance matrix (saved documents, dirty state,
 multiple windows, and conflict) is pending.
 
-Release, Debug, ASan/UBSan and TSan: all 37 registered tests run,
-33 pass and 4 skip, with no failures. GUI builds succeed in all four.
-The metadata suite has 14 cases; its former tag-case and mixed-newline
-failures are fixed. The four skipped executables still compile their fallback
-branches. The existing 28 Phase 0–5 tests remain active. Voice append, PCM
-bank, validator, and integration are not implemented.
-
-Tools → Add Metadata Tags… collects seven fields, protects existing canonical
-tags and omits empty fields. It uses the shared preview/Apply/Cancel flow.
-Preview carries owned optional line endings; Apply validates their count and
-values and atomically updates text/endings with one revision. Runtime tag
-recognition is case-sensitive and requires column zero. Undo/Redo captures
-both text and endings, restoring content IDs and saved-byte identity.
-Real GUI evidence covers form protection/omission, preview Cancel, Apply,
-Undo/Redo, selection restoration, and mixed-newline saving as described in
-the manual acceptance document. The full GUI matrix is not yet complete.
-
-Run `ctest --test-dir build --output-on-failure -R '^phase6_'` for this phase.
-All tests use separate CTest working directories. They may create uniquely
-named temporary directories and remove only their own fixtures.
+Release, Debug, ASan/UBSan, and TSan each have 38 registered tests:
+35 Pass, 3 Skip, 0 Fail. Voice usage and voice append contracts now execute
+against production code. PCM bank, format validator, and integration remain
+unimplemented and skipped.
 
 ## Public API contract used by the tests
 
@@ -245,15 +230,59 @@ The new test passes in Release, Debug, ASan/UBSan and TSan. Full Release suite:
 preservation and original Undo history were exercised; the full GUI matrix remains
 open as recorded in tests/manual/macos-gui-acceptance.md.
 
-## Voice append coverage
+## Next priority: used FM voice append (`GUI-TOOL-04`)
 
-The contract uses a real 8192-byte voice bank. It checks deduplication and
-ascending order of used voice numbers, preservation of the original MML,
-read-only preview, one-revision apply, idempotent reapply, empty usage, invalid
-voice numbers, and rejection of a different document ID. The implementation
-stage must also verify a generated definition compiles in the intended driver
-mode; that scenario belongs in the integration test when the final format is
-known.
+Text transforms and N88 output now have GUI entries. Used FM voice append is
+the next implementation unit because it reuses VoiceService snapshots and
+TextTransformService preview/Apply/Undo. It needs no PCM bank builder or
+artifact validator. CMucom exposes GetUseVoiceMax/GetUseVoiceNum, but the
+current compiler boundary does not publish owned usage information.
+The compiler must copy usage from the compiled artifact/runtime at the correct
+lifecycle point; scanning every source `@` command is not sufficient because
+PSG/rhythm/PCM commands use the same syntax.
+
+`phase6_voice_usage_contract_test` is active now, without an activating-header
+skip. A dependent C++17 detection branch reports the absent field as a real
+assertion failure while compiling against the current public API. Once the
+field exists, the same test checks its content and ownership.
+
+| ID | Fixture/action | Expected result |
+|---|---|---|
+| `VOICE-USAGE-01` | compile packaged sampl1.muc | owned `std::vector<int> used_voice_numbers`; unique set equals 31,78,93,106,108,159; exclude PSG/rhythm/PCM numbers 0,1,4,8,11; all numbers in 0..255 |
+| `VOICE-USAGE-02` | compile sampl2 with same compiler | retained first result still contains sampl1 usage |
+| `VOICE-USAGE-03` | destroy compiler then inspect retained result | owned usage remains valid and identical |
+
+`phase6_voice_append_contract_test` now runs VoiceAppendService::Preview(snapshot, song,
+bank), the owned usage field, and the existing TextTransformPreview type.
+Synthetic songs explicitly select DriverMode::Mucom88.
+
+| ID | Input/action | Expected result |
+|---|---|---|
+| `VAP-01` | usage 78,31,78; preview → Apply → repeat | one definition per used voice, ascending order; original prefix retained; read-only preview with matching ID/revision; first Apply one revision/dirty, repeat no-op |
+| `VAP-02` | empty usage; existing explicit @31 definition different from bank | empty usage no-op; preserve explicit definition byte-for-byte and append only missing @78 |
+| `VAP-03` | -1/256 mixed with valid usage; wrong compiled document/revision; edit after preview | invalid number gives InvalidData atomically; mismatches/stale Apply give Conflict; current text/settings preserved |
+| `VAP-04` | synthetic 8192-byte bank with distinct parameters in each stored operator | independent numeric parser reads FB/AL and four AR/DR/SR/RR/SL/TL/KS/ML/DT rows; exact expected values distinguish storage order 1,3,2,4 from logical order 1,2,3,4; bank unchanged |
+| `VAP-05` | voices 0 and 255 | one complete 38-number definition each; neither boundary dropped |
+| `VAP-06` | mixed CRLF/LF/CR and unterminated source; Apply then inverse preview | original text/endings retained; separator when needed, new lines use preferred ending; inverse restores exact original bytes and clean state |
+| `VAP-07` | voice name containing quote/brace/control/NUL/non-ASCII byte; malformed source; AR=32 | name is safe UTF-8 with no NUL or extra closing brace and intact parameters; invalid source/tone rejected as InvalidData without mutations |
+| `VAP-08` | compile sampl1 → append from actual usage → recompile | exactly six FM definitions and no PSG/rhythm/PCM definitions; generated MUCOM syntax compiles; total count/title/embedded PCM preserved |
+| `VAP-09` | BOM/CRLF and CP932 Japanese source; Unknown/MucomDotNet driver | encoding and exact original byte prefix preserved after one revision; unsupported drivers return UnsupportedDriver without mutation |
+
+Definition whitespace and safe-name spelling are not fixed byte goldens.
+Numeric parameter checks use an independent parser, and VAP-08 checks actual
+compiler acceptance. The compiler-facing usage set is derived from the known
+FM channels in the packaged fixture, not from a generic regex over source.
+Classic definition syntax has no explicit AM field. Missing used tones with
+AM enabled return UnsupportedFormat atomically; existing inline definitions
+are preserved. VAP-07 checks this rejection. VAP-08 also compiles and recompiles
+fixtures with explicit Mucom88, Mucom88E, and Mucom88EM modes.
+
+Validation (2026-10-06): all four GUI builds and full suites pass (35 Pass,
+3 Skip, 0 Fail). Expanded driver fixtures also pass in all four configurations.
+Native GUI evidence covers six-voice preview, Cancel, Apply, one Undo/Redo,
+recompile, and repeat Apply without an extra Undo entry. GUI testing found
+and fixed a dangling preview reference in the asynchronous sheet and an empty
+Undo group on unchanged Apply. The remaining manual matrix is pending.
 
 ## PCM bank coverage
 
@@ -286,7 +315,7 @@ compile, embedded PCM MUB export, WAV export, and structural validation.
 
 ## Completion gate
 
-All nine Phase 6 tests must be active and pass with the existing suite in
+All ten Phase 6 tests must be active and pass with the existing suite in
 Release, Debug, ASan/UBSan, and TSan. The nine `GUI-TOOL`/`GUI-EXPORT` items in
 `tests/manual/macos-gui-acceptance.md` must have real GUI evidence, including
 Undo/Redo, save panel cancellation, progress cancellation, and errors. No

@@ -40,6 +40,8 @@ struct CompileDiagnostic {
 
 struct CompiledSong {
     std::vector<std::uint8_t> mub_bytes;
+    std::vector<int> used_voice_numbers;
+    std::string resolved_voice_bank_path;
     DriverMode driver = DriverMode::Unknown;
     int max_count = 0;
     std::array<int, 11> channel_total_counts{};

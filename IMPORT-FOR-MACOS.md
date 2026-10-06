@@ -2115,3 +2115,23 @@ N88ExportServiceとTools → Export N88-BASIC Source…を実装した。開始�
 N88-13～15を追加しproduction serviceで実file保存を検証した。4構成でGUI buildと全37 CTestが成功し、
 33 Pass／4 Skip／0 Fail。実GUIでcustom numbering、save panel Cancel、保存bytes、元選択／Undo保持、
 増分0の拒否を確認した。文字コード選択を含む残りのGUI受入は未完了である。
+
+
+## 34. 使用FM voice追記の実装前test（2026-10-06）
+
+次の対象をGUI-TOOL-04とした。新phase6_voice_usage_contract_testは実曲sampl1のFM voice setと
+別compile／compiler破棄後のowned情報保持を検証する。現在はCompiledSongに使用番号fieldがないためFailする。
+phase6_voice_append_contract_testはVAP-01～09へ拡張し、numeric mapping、既存定義保護、
+encoding／改行、inverse、name、安全なerror、実曲再compileを固定した。activating header不在でSkipである。
+4構成でbuildし同じmissing fieldを確認した。future bodyの宣言だけを使った構文checkはPassしたが、
+service本体のassertionはまだ実行していない。Release全38 CTestは33 Pass／4 Skip／1 Fail。
+VAP-GUI-01～09は設計済み・未実施。今回の変更はtestと文書に限り、production実装は次の作業とする。
+
+## 35. 使用FM voice追記実装（2026-10-06）
+
+CompiledSongにowned使用番号と解決済みbank pathを追加し、VoiceAppendServiceとTools → Append Used FM Voices…を実装した。
+非同期compile結果から不足する定義だけを番号順にpreviewし、共通Apply／Undoへ接続する。原文encoding／改行と既存定義を保持する。
+無効な番号・tone、stale結果、unsupported driverを拒否し、従来構文で保存できないAMはUnsupportedFormatにする。
+4構成の全38 CTestは35 Pass／3 Skip／0 Fail。使用情報のownership、独立numeric oracle、実曲と3 driverの再compileを確認した。
+実GUIで6音色preview、Cancel、Apply、Undo／Redo、再compile、no-op再適用を確認し、sheetのpreview寿命と空Undo groupを修正した。
+複数window、encoding保存、default bankとの切替など残りのGUI matrixは未完了。Phase 6全体も未完了である。

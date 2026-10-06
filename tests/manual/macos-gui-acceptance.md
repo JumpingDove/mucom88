@@ -297,6 +297,30 @@ GUI-TOOL-03全体を完了扱いにはしない。
 CP932／BOMのGUI選択・保存、設定／preview Cancel、2 window、再open／GUI compile等の
 残りのmatrixは未実施であり、GUI-TOOL-07全体の完了とはしない。
 
+
+`GUI-TOOL-04` 使用FM voice追記の詳細受入設計（一部実施済み）:
+
+2026-10-06実GUI確認: 検証専用appとsampleコピーで6音色preview、Cancel、Apply、1回のUndo／Redo、再compile成功を確認。
+最終修正版では単一voice fixtureの再適用後も1回のUndoで元ソースへ戻り、空Undo groupがないことを確認した。
+preview寿命とno-op Undo groupの不具合を修正済み。元選択／dirty表示の全条件、複数window、bank切替、encoding保存、error matrixは未実施。
+以下のmatrix全体を完了扱いにはしない。
+
+| ID | 操作・fixture | 期待結果・記録する証拠 |
+|---|---|---|
+| `VAP-GUI-01` | sampl1.mucをcompile後、使用voice追記を起動 | 実compile結果から6 voiceだけを番号順にpreviewし、PCM／PSG／rhythm番号を追記しない |
+| `VAP-GUI-02` | sourceへ選択を設定してpreview Cancel | 本文・選択・dirty・Undo履歴が不変。bankへの書込も発生しない |
+| `VAP-GUI-03` | 保存済み／dirty sourceへApply→Undo一回→Redo一回 | 全追記を一操作で往復し、元選択と元dirty状態へ戻る。再compile成功 |
+| `VAP-GUI-04` | 同じvoiceを複数channelで使用、既存inline定義を含めて再実行 | 一voice一回。既存inline定義を上書きせず、2回目はno-opでUndo履歴を増やさない |
+| `VAP-GUI-05` | preview後にsourceを編集、別文書windowでも操作 | stale revisionはConflict、元編集を保護。他文書へ適用しない。sheetで編集不可ならその事実を記録し自動VAP-03で競合を確認 |
+| `VAP-GUI-06` | #voice指定bankとapplication default bankを別内容にする | compiled songで実際に解決されたbankを使用し、別のglobal/default bankから追記しない。missing bankはpathと理由を表示 |
+| `VAP-GUI-07` | CP932日本語／BOM／混在改行／末尾改行なしの文書でApply、Undo、保存 | 原文encoding・改行・BOMとselectionを保持。Undo保存は元bytesと一致、追加行はpreferred改行 |
+| `VAP-GUI-08` | compile失敗、compiled resultなし、unsupported driver、番号付きN88 | 安全にdisabledまたは理由を表示。必要ならcompile／N88行番号除去を案内し、本文を変更しない |
+| `VAP-GUI-09` | 境界voice、nameに特殊文字を持つ検証bank | voice 0／255を取り落とさず、nameから定義・tag・commentを注入しない。生成定義を再compileして確認 |
+
+productionの追記serviceとGUIは未実装。自動voice-usage testはmissing fieldでFail、
+追記service契約はactivating header不在でSkip。本体の構文確認はruntime検証ではない。
+AMや対応driver形式の未確定部分を実装時に解決し、追加fixtureで検証してから対応済みとする。
+
 Phase 6の実装前contractは`src/tests/phase6/README.md`に記録する。save panel Cancelではoperationを開始せず、
 処理中Cancelでは既存destinationを維持して一時fileを残さない。生成したMUBはmacOS版で再読込・再生する。
 

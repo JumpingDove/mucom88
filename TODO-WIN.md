@@ -1394,9 +1394,18 @@ N88-13～15を追加し全15 caseがPass。4構成でGUI buildと全37 CTestが�
 CP932等の残りの手動受入は未実施であり、GUI-TOOL-07全体は未完了である。
 
 
+**次の実装対象とtest（2026-10-06）:** 使用FM voice定義の追記（GUI-TOOL-04）を選択した。
+既存VoiceServiceとpreview／Apply／Undo基盤を再利用する。CompiledSongにowned使用番号情報を
+公開するphase6_voice_usage_contract_testを追加し、実曲のFM限定抽出とcompile後／compiler破棄後の保持を固定した。
+追記契約をVAP-01～09へ拡張し、重複／順序、既存定義、parameterとoperator順、境界、
+改行／encoding／inverse、name安全性、stale拒否、実曲再compileを設計した。
+VAP-GUI-01～09も設計済み・未実施。4構成でbuildし、新usage testはmissing fieldでFail、追記はSkip。
+future本体は予定APIの宣言だけの一時headerで構文確認したが、runtime assertionは未実行である。
+Release全38 CTestは33 Pass／4 Skip／1 Fail。production codeは変更していない。
+
 - [ ] text transformをUIから分離し、previewとUndoを提供する
 - [ ] N88行番号除去、G channel変換、metadata tag追加
-- [ ] 使用FM voice定義の追記
+- [x] 使用FM voice定義の追記（service／GUI実装・自動回帰完了、残GUI受入は継続）
 - [ ] N88-BASIC source出力
 - [ ] `pcmtool`をportable libraryとCMake targetへ整理する
 - [ ] DATA／`VOICE._n`、list、WAV／ADPCMからPCM bankを作成する
@@ -1525,3 +1534,5 @@ Windows CLI比較は先行条件にしない。
 | 2026-10-06 | 次優先項目のtest追加 | `GUI-TOOL-02` G channel変換を選択し、8ケースの専用CTestとGUI受入手順を追加 | Release全35件中31 Pass／4 Skip。専用testはDebug／ASan+UBSan／TSanでもPass。GUI入口と実操作受入は未実施 |
 | 2026-10-06 | `GUI-TOOL-02` GUI入口実装 | Tools menuのG channel変換をN88と共通のpreview／Apply／Undo経路へ接続 | Release全35件中31 Pass／4 Skip。Debug／ASan+UBSan／TSanでGUI buildと専用CTest成功。実GUIで4行のpreview、Cancel、Apply、Undo／Redoを確認。手動受入の残項目は継続 |
 | 2026-10-06 | 次実装項目のtest追加 | `GUI-TOOL-03`を選択し、metadata tagの8ケースと手動GUI受入を設計・登録 | 専用CTestはbuild成功、`TAG-03`大文字tagと`TAG-06`混在改行の2条件でFail。次のproduction実装で修正する。GUI入口は未実装 |
+
+| 2026-10-06 | Phase 6 使用FM voice追記実装 | owned使用番号、resolved bank path、VoiceAppendService、非同期compileからのpreview／Applyを追加。既存定義・encoding・改行・Undoを保持しAMは明示拒否 | 4構成で38 CTest中35 Pass／3 Skip／0 Fail。実GUIで6音色preview、Cancel、Apply、Undo／Redo、再compile、no-op再適用を確認。残GUI matrixは継続 |
