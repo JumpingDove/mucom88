@@ -232,9 +232,9 @@ Tools → Convert G Channel q to @…を開くとOriginalとPreviewが表示さ�
 CP932および混在改行の文書では保存後も文字コードと元行の改行種別を保持することを確認する。
 2 window間の誤適用とpreview後の編集競合を拒否し、番号付きN88では先に行番号を除去する。
 最後に`sampl1.muc`からcomposerだけを除いたfixtureへ再追加し、macOS版でcompileする。
-現時点ではGUI入口未実装であり、自動testは`TAG-03`と`TAG-06`の2条件で失敗する。
+2026-10-06にGUI入口を実装し、TAG-03／06の不具合を修正した。専用testは全14 caseがPassする。
 
-`GUI-TOOL-03`の詳細ケース（2026-10-06、全件未実施）:
+`GUI-TOOL-03`の詳細ケース（2026-10-06、下記に実施証拠を記録）:
 
 | ID | 操作・fixture | 期待結果・記録する証拠 |
 |---|---|---|
@@ -248,8 +248,54 @@ CP932および混在改行の文書では保存後も文字コードと元行の
 | `TAG-GUI-08` | 改行を含む値をpaste、番号付きN88で起動、全欄空欄で起動 | 不正値を適用しない。N88は先に行番号除去を案内。全欄空欄は本文・dirty・Undo履歴を変更しない |
 | `TAG-GUI-09` | `sampl1.muc`からcomposerだけ除いたcopyで入力→Apply→Save→再open→compile | 既存titleと再追加composerがmetadataに反映され、PCM内蔵MUBへcompile成功。保存物とcompile結果を記録 |
 
-自動テストはTAG-01～12へ拡張した。TAG-03、TAG-06、TAG-10の混在改行2fixtureが失敗し、
-他caseはPassする。GUIケースの設計はnative UI実行の証拠ではなく、受入完了には実操作が必要である。
+自動テストはTAG-01～14が4構成でPassする。実GUI確認は既存の起動中アプリを変更せず、
+Release appの検証専用copyと一時fixtureで行った。
+
+- TAG-GUI-01: 7欄を確認。既存titleはdisabledで値Existingを保持し、composerだけ入力すると
+  他の空欄の行は追加されなかった。
+- TAG-GUI-02（preview Cancel）: A cを選択したdirty文書でpreview Cancel後の本文・選択を確認した。
+- TAG-GUI-03／04（一部）: dirty文書でApply → Undo一回 → Redo一回を行い、本文が往復し、
+  Undoで元のA c選択が復元された。保存済み混在改行fixtureでもB dの選択復元を確認した。
+- TAG-GUI-05（混在改行）: 元bytesは `#mucom88 1.5\r\n#title Existing\r\nA c\nB d\r`。
+  composer C／author AをApply、Undo、Saveすると元bytesと完全一致した。Redo、Save後は
+  `#mucom88 1.5\r\n#title Existing\r\n#composer C\r\n#author A\r\nA c\nB d\r`と完全一致した。
+- 再実行のno-op: title／composer／authorがdisabled、他欄を空欄にしたpreviewはOriginalと一致した。
+  Apply後にEdit → Undo Add Metadata Tagsを選ぶと、前回追加した2行が一回で消え、B d選択が戻った。
+
+上記は基本GUI経路と混在改行保存の証拠である。dirty表示自体、CP932の実GUI保存、入力画面Cancel、
+大文字tag／N88の実GUI操作、2文書競合、再open／GUI compileの残りの受入は未確認である。
+GUI-TOOL-03全体を完了扱いにはしない。
+
+
+`GUI-TOOL-07` N88-BASIC出力の詳細受入設計（実施証拠は下記）:
+
+| ID | 操作 | 期待結果・証拠 |
+|---|---|---|
+| `N88-GUI-01` | 保存済みMUCで出力を開き、既定1000/10と任意7/3でpreview | 行番号・空行・末尾改行を反映。出力はnumbered textであることを表示し、元editor本文を変更しない |
+| `N88-GUI-02` | dirty文書で選択を設定し、設定画面／previewでそれぞれCancel | 本文・選択・dirty・location・Undo履歴が変わらない。source revisionの非変更は自動N88-06が担当 |
+| `N88-GUI-03` | previewからsave panelへ進みCancel | destinationと一時fileを作らない。既存destinationも変えず、元文書に保存済みの印を付けない |
+| `N88-GUI-04` | 開始行負値、増分0／負値、最終行overflowを入力 | 検証errorを表示し、保存を開始しない。INT_MAX境界と末尾改行は自動N88-04も確認 |
+| `N88-GUI-05` | 日本語／space pathへUTF-8 BOMまたはCP932で保存、再open | selected encoding・BOM・改行と開始行／増分を反映。元sourceのpath・dirty・Undo履歴を保つ |
+| `N88-GUI-06` | CP932非対応文字の文書を既存destinationへ保存、書込不可pathも試す | 理由を表示し既存fileを保護、partialなし。元文書を保存済みにしない |
+| `N88-GUI-07` | 2文書を開き片方をpreview、別windowを操作 | captured sourceだけを出力。他文書へApply／Saveしない。元sourceのrevisionが変わった場合は再previewを要求し古い結果を現在の出力として黙って保存しない |
+| `N88-GUI-08` | 空文書、blank行だけ、no-final-newlineの文書を出力 | N88-03の境界規則と一致し、元選択・Undoを保持する |
+| `N88-GUI-09` | sampl1.mucのcopyから出力→再open→行番号除去→compile | 元曲と同じmetadata、PCM内蔵MUBを得る。番号付きsourceへ再度出力する操作はGUIで案内・拒否し、二重番号を付けない |
+
+2026-10-06にTools → Export N88-BASIC Source…とN88ExportServiceを実装した。
+自動N88-01～15が4構成でPass。保存fixtureはproduction service経由で検証する。
+検証専用Release appの新規文書に `A c\n\nB d` を入力し、B dを選択して実GUIを確認した。
+
+- N88-GUI-01: 既定1000/10とUTF-8の設定欄を確認し、7/3でpreviewを表示した。
+  表示は `7 'A c\n10 '\n13 'B d` と一致した。
+- N88-GUI-03: save panelのCancel後も元本文とB d選択が不変だった。
+- N88-GUI-05（一部）: 一時directoryへfixture.n88を保存し、保存bytesがpreviewと完全一致した。
+  元文書の本文、名称未設定のlocation、B d選択を保持した。
+- 元Undo履歴: 出力後にUndo一回で元のpasteが取り消され空文書へ戻った。
+  出力自身はUndo操作を登録していない。Redo後に元本文へ戻した。
+- N88-GUI-04（一部）: 増分0で整数入力errorを表示し、preview／save panelを開始しなかった。
+
+CP932／BOMのGUI選択・保存、設定／preview Cancel、2 window、再open／GUI compile等の
+残りのmatrixは未実施であり、GUI-TOOL-07全体の完了とはしない。
 
 Phase 6の実装前contractは`src/tests/phase6/README.md`に記録する。save panel Cancelではoperationを開始せず、
 処理中Cancelでは既存destinationを維持して一時fileを残さない。生成したMUBはmacOS版で再読込・再生する。

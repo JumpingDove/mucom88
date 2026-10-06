@@ -144,6 +144,8 @@ mucom88_add_phase6_contract_test(phase6_g_channel_contract_test
     test_phase6_g_channel_contract.cpp 30)
 mucom88_add_phase6_contract_test(phase6_metadata_tag_contract_test
     test_phase6_metadata_tag_contract.cpp 30)
+mucom88_add_phase6_contract_test(phase6_n88_export_contract_test
+    test_phase6_n88_export_contract.cpp 45)
 mucom88_add_phase6_contract_test(phase6_voice_append_contract_test
     test_phase6_voice_append_contract.cpp 45)
 mucom88_add_phase6_contract_test(phase6_pcm_bank_contract_test

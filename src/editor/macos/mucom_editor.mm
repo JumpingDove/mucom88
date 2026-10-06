@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cfloat>
+#include <climits>
 #include <chrono>
 #include <filesystem>
 #include <memory>
@@ -15,6 +16,7 @@
 #include "editor/application_services.h"
 #include "editor/document_service.h"
 #include "editor/text_transform_service.h"
+#include "editor/n88_export_service.h"
 #include "editor/song_metadata.h"
 #include "editor/editor_command.h"
 #include "editor/recovery_service.h"
@@ -427,6 +429,7 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
 - (IBAction)convertGChannel:(id)sender;
 - (void)runTextTransform:(mucom88::TextTransformKind)kind
     title:(NSString *)title;
+- (IBAction)exportN88Source:(id)sender;
 - (IBAction)addMetadataTags:(id)sender;
 - (void)previewTextTransform:(const mucom88::TextTransformRequest &)request
     source:(const mucom88::DocumentSnapshot &)source title:(NSString *)title;
@@ -922,7 +925,10 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     }
     alert.accessoryView = container;
     [alert beginSheetModalForWindow:_editorView.window completionHandler:^(NSModalResponse response) {
-        if (response != NSAlertFirstButtonReturn) return;
+        if (response != NSAlertFirstButtonReturn) {
+            [self->_editorView.window makeFirstResponder:self->_editorView];
+            return;
+        }
         mucom88::TextTransformRequest request;
         request.kind = mucom88::TextTransformKind::AddMetadataTags;
         const char *names[] = {"title", "composer", "author", "voice", "pcm", "date", "comment"};
@@ -1009,12 +1015,99 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     alert.accessoryView = container;
     [alert beginSheetModalForWindow:_editorView.window
         completionHandler:^(NSModalResponse response) {
+        [self->_editorView.window makeFirstResponder:self->_editorView];
         if (response != NSAlertFirstButtonReturn) return;
         [self->_editorView breakUndoCoalescing];
         [self.undoManager beginUndoGrouping];
         [self applyToolPreview:preview selection:NSMakeRange(0, 0) actionName:title];
         [self.undoManager endUndoGrouping];
         [self->_editorView breakUndoCoalescing];
+    }];
+}
+
+- (IBAction)exportN88Source:(id)sender
+{
+    (void)sender;
+    NSError *error = nil;
+    if (![self syncModelFromEditor:&error]) { [self presentError:error]; return; }
+    const auto source = _model->Snapshot();
+    NSAlert *settings = [[NSAlert alloc] init];
+    settings.messageText = @"Export N88-BASIC Source";
+    settings.informativeText = @"Save numbered text to a separate file. The editing document stays unchanged.";
+    [settings addButtonWithTitle:@"Preview"];
+    [settings addButtonWithTitle:@"Cancel"];
+    NSView *form = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 400, 110)];
+    NSTextField *start = [[NSTextField alloc] initWithFrame:NSMakeRect(170, 75, 220, 24)];
+    start.stringValue = @"1000";
+    NSTextField *increment = [[NSTextField alloc] initWithFrame:NSMakeRect(170, 40, 220, 24)];
+    increment.stringValue = @"10";
+    NSPopUpButton *encoding = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(170, 5, 220, 26)];
+    [encoding addItemsWithTitles:@[@"UTF-8", @"UTF-8 with BOM", @"CP932", @"Shift_JIS"]];
+    [encoding selectItemAtIndex:static_cast<NSInteger>(source.encoding)];
+    const NSArray<NSString *> *labels = @[@"First line number", @"Line increment", @"Text encoding"];
+    for (NSUInteger index = 0; index < labels.count; ++index) {
+        NSTextField *label = [NSTextField labelWithString:labels[index]];
+        label.frame = NSMakeRect(0, 75 - index * 35, 165, 24);
+        [form addSubview:label];
+    }
+    [form addSubview:start]; [form addSubview:increment]; [form addSubview:encoding];
+    settings.accessoryView = form;
+    [settings beginSheetModalForWindow:_editorView.window completionHandler:^(NSModalResponse response) {
+        [self->_editorView.window makeFirstResponder:self->_editorView];
+        if (response != NSAlertFirstButtonReturn) return;
+        const auto parse = [](NSString *value, int *output) {
+            NSScanner *scanner = [NSScanner scannerWithString:value];
+            long long number = 0;
+            if (![scanner scanLongLong:&number] || !scanner.isAtEnd ||
+                number < 0 || number > INT_MAX) return false;
+            *output = static_cast<int>(number);
+            return true;
+        };
+        int first = 0, step = 0;
+        if (!parse(start.stringValue, &first) || !parse(increment.stringValue, &step) || step == 0) {
+            NSError *numberError = nil;
+            SetError(&numberError, 6, @"Enter a nonnegative integer start and a positive integer increment, each at most 2147483647.");
+            [self presentError:numberError]; return;
+        }
+        const auto result = mucom88::N88ExportService().Preview(source, first, step);
+        if (!result.Succeeded()) {
+            NSError *previewError = nil;
+            SetError(&previewError, 7, StringFromUtf8(result.error.message));
+            [self presentError:previewError]; return;
+        }
+        const auto preview = result.value;
+        const auto selectedEncoding = static_cast<mucom88::TextEncoding>(encoding.indexOfSelectedItem);
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.messageText = @"N88-BASIC Source Preview";
+        alert.informativeText = @"This is numbered text, not tokenized BASIC. Save creates a separate output file.";
+        [alert addButtonWithTitle:@"Save…"]; [alert addButtonWithTitle:@"Cancel"];
+        NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 640, 300)];
+        scroll.hasVerticalScroller = YES;
+        NSTextView *view = [[NSTextView alloc] initWithFrame:scroll.bounds];
+        view.editable = NO;
+        view.font = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
+        view.string = StringFromUtf8(preview.utf8_text);
+        scroll.documentView = view; alert.accessoryView = scroll;
+        [alert beginSheetModalForWindow:self->_editorView.window completionHandler:^(NSModalResponse choice) {
+            [self->_editorView.window makeFirstResponder:self->_editorView];
+            if (choice != NSAlertFirstButtonReturn) return;
+            NSSavePanel *panel = [NSSavePanel savePanel];
+            panel.title = @"Save N88-BASIC Source";
+            panel.nameFieldStringValue = source.path.empty() ? @"Untitled.n88" :
+                [[StringFromUtf8(source.path).lastPathComponent stringByDeletingPathExtension]
+                    stringByAppendingPathExtension:@"n88"];
+            [panel beginSheetModalForWindow:self->_editorView.window completionHandler:^(NSModalResponse saved) {
+                [self->_editorView.window makeFirstResponder:self->_editorView];
+                if (saved != NSModalResponseOK || panel.URL == nil) return;
+                const auto result = mucom88::N88ExportService().Save(self->_model->Snapshot(),
+                    preview, panel.URL.fileSystemRepresentation, selectedEncoding);
+                if (!result.Succeeded()) {
+                    NSError *saveError = nil;
+                    SetError(&saveError, 8, StringFromUtf8(result.error.message));
+                    [self presentError:saveError];
+                }
+            }];
+        }];
     }];
 }
 
@@ -1481,7 +1574,8 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     }
     if (item.action == @selector(removeN88LineNumbers:) ||
         item.action == @selector(convertGChannel:) ||
-        item.action == @selector(addMetadataTags:)) {
+        item.action == @selector(addMetadataTags:) ||
+        item.action == @selector(exportN88Source:)) {
         return _editorView != nil && _editorView.window.attachedSheet == nil;
     }
     if (item.action == @selector(goToLine:)) {
@@ -1656,6 +1750,7 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
         @selector(convertGChannel:), @"");
 
     AddMenuItem(toolsMenu, @"Add Metadata Tags…", @selector(addMetadataTags:), @"");
+    AddMenuItem(toolsMenu, @"Export N88-BASIC Source…", @selector(exportN88Source:), @"");
 
     NSMenuItem *formatItem = [[NSMenuItem alloc] init];
     [mainMenu addItem:formatItem];

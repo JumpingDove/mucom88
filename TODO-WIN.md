@@ -1364,6 +1364,35 @@ GUI入口実装と合わせてこの2点を修正し、専用testをPassさせ�
 TAG-GUI-01～09で入力欄、Cancel、Undo／Redo、保存bytes、2文書、N88、再compileを設計した。
 production codeは変更せず、手動GUI caseは未実施である。詳細はPhase 6 READMEとGUI受入文書を参照。
 
+**metadata GUI実装と不具合修正（2026-10-06）:** Tools → Add Metadata Tags…を追加した。
+7欄、既存canonical tagの保護、空欄の省略、N88行番号除去の案内、preview／Apply／Cancelを提供する。
+既存tag判定をruntimeと同じ大小文字区別・行頭規則に変更した。previewに改行情報を保持し、
+DocumentServiceが本文と同時に検証・適用する。Undo／Redoも本文と改行情報を復元する。
+TAG-13／14で不正改行情報の原子的拒否とinverse／redoの保存bytes・dirty復元を追加し、全14 caseがPass。
+4構成でGUI buildと全36 CTestが成功し、32 Pass／4 Skip／0 Failとなった。
+実GUIで入力欄・既存tag保護・空欄省略・preview Cancel・Apply・Undo／Redo・選択範囲復元を確認した。
+混在改行文書のUndo後は元保存bytesと完全一致、Redo後も元行のLF／CRと追加行のCRLFを確認した。
+CP932実GUI保存、2文書のGUI競合、GUI再compile等の残りの受入は未実施なのでGUI-TOOL-03全体は未完了。
+
+
+
+**次の実装対象とtest（2026-10-06）:** N88-BASIC source出力GUI（GUI-TOOL-07）を選択した。
+既存ExportN88BasicとDocumentServiceを使え、voice追記・PCM bankの未実装serviceに依存しない。
+専用phase6_n88_export_contract_testを追加し、N88-01～12で番号・空行・末尾改行・整数境界、
+preview破棄、UTF-8 BOM／CP932／混在改行、Unicode path、保存失敗の既存file保護、
+dirty editorと元disk fileの非変更、実曲compile round tripを固定した。
+4構成で専用testがPass。Release全37 CTestは33 Pass／4 Skip／0 Fail。
+N88-GUI-01～09の設定・preview・save panel Cancel・2 window・再open／compileを設計した。
+今回はtest／文書のみ変更し、N88出力GUIは未実装である。
+
+**N88出力GUI実装（2026-10-06）:** Tools → Export N88-BASIC Source…とportable
+N88ExportServiceを追加した。開始行／増分／encoding、read-only preview、NSSavePanelを接続した。
+保存は別DocumentServiceで行い、editorの本文・path・dirty・Undoを変更しない。
+古いpreview、元sourceと同じpath／symlink／hardlink、未知encoding、番号付きsourceを拒否する。
+N88-13～15を追加し全15 caseがPass。4構成でGUI buildと全37 CTestが成功し、33 Pass／4 Skip／0 Fail。
+実GUIで7/3のpreview、save panel Cancel、保存bytes、元本文・選択・Undo保持、増分0拒否を確認した。
+CP932等の残りの手動受入は未実施であり、GUI-TOOL-07全体は未完了である。
+
 
 - [ ] text transformをUIから分離し、previewとUndoを提供する
 - [ ] N88行番号除去、G channel変換、metadata tag追加

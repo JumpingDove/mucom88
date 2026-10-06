@@ -12,7 +12,8 @@ while any of its contract tests is skipped or failing.
 |---|---|---|
 | `phase6_text_transform_contract_test` | `editor/text_transform_service.h` | Pass |
 | `phase6_g_channel_contract_test` | existing text transform and document services | Pass |
-| `phase6_metadata_tag_contract_test` | text transform, metadata, document, and compiler services | Fail (2 known gaps) |
+| `phase6_metadata_tag_contract_test` | text transform, metadata, document, and compiler services | Pass |
+| `phase6_n88_export_contract_test` | N88 export, text transform, document, and compiler services | Pass |
 | `phase6_voice_append_contract_test` | voice append and text transform headers | Skip |
 | `phase6_pcm_bank_contract_test` | `editor/pcm_bank_service.h` | Skip |
 | `phase6_format_validator_contract_test` | `editor/export_format_validator.h` | Skip |
@@ -29,13 +30,22 @@ path have been exercised in the real GUI, including restoration of a selected
 non-G line. The remaining acceptance matrix (saved documents, dirty state,
 multiple windows, and conflict) is pending.
 
-Release has 36 registered: 31 passed, 4 skipped, and the new metadata-tag
-test failed on the two gaps described below. Its Debug, ASan/UBSan, and TSan
-runs fail on the same assertions, with no additional failures. The G-channel test passes
-in Release, Debug, ASan/UBSan, and TSan. The Phase 6 suite now has eight
-CTests. The four skipped executables
-still compile their fallback branches. The existing 28 Phase 0–5 tests remain
-active. Voice append, PCM bank, validator, and integration are not implemented.
+Release, Debug, ASan/UBSan and TSan: all 37 registered tests run,
+33 pass and 4 skip, with no failures. GUI builds succeed in all four.
+The metadata suite has 14 cases; its former tag-case and mixed-newline
+failures are fixed. The four skipped executables still compile their fallback
+branches. The existing 28 Phase 0–5 tests remain active. Voice append, PCM
+bank, validator, and integration are not implemented.
+
+Tools → Add Metadata Tags… collects seven fields, protects existing canonical
+tags and omits empty fields. It uses the shared preview/Apply/Cancel flow.
+Preview carries owned optional line endings; Apply validates their count and
+values and atomically updates text/endings with one revision. Runtime tag
+recognition is case-sensitive and requires column zero. Undo/Redo captures
+both text and endings, restoring content IDs and saved-byte identity.
+Real GUI evidence covers form protection/omission, preview Cancel, Apply,
+Undo/Redo, selection restoration, and mixed-newline saving as described in
+the manual acceptance document. The full GUI matrix is not yet complete.
 
 Run `ctest --test-dir build --output-on-failure -R '^phase6_'` for this phase.
 All tests use separate CTest working directories. They may create uniquely
@@ -126,9 +136,9 @@ acceptance matrix above remains open. The GUI test uses the application's
 standard Undo manager; the C++ service cannot validate AppKit selection or Undo
 grouping.
 
-### Next priority: metadata-tag GUI entry (`GUI-TOOL-03`)
+### Metadata-tag GUI entry (`GUI-TOOL-03`)
 
-This is the next implementation unit. Windows inserts `title`, `composer`,
+The GUI entry is implemented. Windows inserts `title`, `composer`,
 `author`, `voice`, `pcm`, `date`, and `comment`; the macOS metadata parser and
 compiler recognize the exact lower-case spellings. The UI should collect the
 missing fields, omit fields left empty, show existing canonical fields without
@@ -153,6 +163,9 @@ contract. It has the following cases:
 | `TAG-10` | two inserted tags; LF/CRLF/CR, mixed CRLF majority, mixed prepend, unterminated MML, empty source | exact encoded bytes and per-line ending vector match independently decoded expected bytes; existing endings stay attached to original lines; additions use the original preferred ending; one revision |
 | `TAG-11` | change encoding or newline style after preview | Apply returns Conflict and preserves the changed settings, text, encoded bytes, revision and dirty state |
 | `TAG-12` | two threads Apply the same changed preview | exactly one succeeds, the other returns Conflict; one title and one revision increment |
+| `TAG-13` | malformed optional ending vectors (empty, short, Mixed, out-of-range) | InvalidData without modifying text, revision, encoding, endings or dirty state |
+| `TAG-14` | Apply → inverse preview → redo on saved and dirty mixed-newline documents | exact original bytes and original dirty/content ID restored; redo restores transformed bytes; each update adds one revision |
+
 
 Every case prints its TAG ID before running; the newline matrix also prints
 its fixture name. Cases continue after assertion failures so one failed
@@ -162,23 +175,20 @@ No new preview/newline API is prescribed by these tests: the oracle is exact
 saved bytes and DocumentSnapshot state. Implementation may choose its API
 while preserving these observations.
 
-Extension run (2026-10-06): Release, Debug, ASan/UBSan and TSan build the test.
-TAG-03, TAG-06 and the mixed-CRLF/prepend-mixed fixtures of TAG-10 fail;
-all other cases pass. The failures remain the same two production gaps
-(case-sensitive canonical tag detection and line-ending relocation), with
-seven failed assertions in total. No production code was changed by this
-extension. Service-side preview discard is tested in TAG-09; it does not
-claim to test the native Cancel button or AppKit Undo.
-
+Implementation run (2026-10-06): all 14 cases pass in Release, Debug,
+ASan/UBSan and TSan. TAG-03 also covers mixed-case names, indented tag-like
+lines, and longer unrelated names to match the runtime parser. TAG-13 and
+TAG-14 verify the new optional-ending API and the service-side inverse used
+by native Undo/Redo. TAG-09 tests service-side discard; native Cancel and
+Undo evidence is recorded separately.
 
 The first run on 2026-10-06 compiled but failed at `TAG-03` and the mixed
 newline subcase of `TAG-06`. `TextTransformService` currently folds tag names
 to lower case when detecting existing tags, whereas `MetadataService` only
 recognizes exact lower-case names. `DocumentService` keeps original newline
 styles by line index, so inserting a line into mixed-newline text shifts the
-styles of subsequent original lines. Keep these assertions red until both
-production behaviors are corrected in the next implementation turn; do not
-mask them as skipped or expected failures.
+styles of subsequent original lines. Both behaviors were corrected on 2026-10-06; all assertions now pass
+without skips or expected-failure flags.
 
 The GUI acceptance uses a saved UTF-8 MUC with `#mucom88`, an existing title,
 missing composer/author/voice/pcm/date/comment, and a second CP932 or mixed-
@@ -188,6 +198,52 @@ selection, revision, and dirty state; Apply as one Undo/Redo step; and that two
 windows cannot cross-apply. Check an upper-case-only tag is not mistaken for a
 runtime tag, N88 is stripped before use, and the resulting saved MUC compiles.
 The C++ contract cannot validate AppKit form defaults, selection, or Undo.
+
+
+### N88-BASIC source export (`GUI-TOOL-07`)
+
+The native export action is implemented using N88ExportService and the
+existing ExportN88Basic transformation. It has fewer new service dependencies than
+voice append or PCM bank. Capture the editing snapshot, collect start/increment,
+show a read-only numbered preview, then save an isolated output document;
+do not Apply numbered text to the editing document. Native export must preserve
+the source text, selection, revision, dirty state, location and Undo history.
+The saved format is numbered text, not tokenized BASIC. Current numbering
+contract uses nonnegative signed-int start and positive signed-int increment;
+this is not a claim about a physical N88 interpreter's accepted number range.
+
+`phase6_n88_export_contract_test` tests production N88ExportService::Save
+against actual files. The service validates source document/revision,
+protects the original source path (including symlinks/hardlinks), and uses an
+isolated output DocumentService for atomic writes. Its Preview rejects
+already-numbered source. The GUI exposes settings → numbered preview →
+NSSavePanel, with integer validation and explicit encoding choice.
+
+| ID | Fixture/action | Expected observable result |
+|---|---|---|
+| `N88-01` | three lines, defaults 1000/10 and custom 7/3 | exact numbered text; preview keeps source ID/revision and never mutates source |
+| `N88-02` | leading/interior blank lines, spaces/tabs, apostrophes, quoted text, comments | only numbering/apostrophe prefix is added; export/remove round trip preserves all source text |
+| `N88-03` | empty, newline only, no final newline, final newline, double final newline | no invented trailing line; empty source produces empty output; exact terminal newlines |
+| `N88-04` | INT_MAX single line; last number exactly INT_MAX; overflow by one | exact-boundary outputs succeed; overflow fails without partial application |
+| `N88-05` | negative start, zero/negative increment, malformed UTF-8, NUL | InvalidData and unchanged source snapshot |
+| `N88-06` | discard preview on saved and dirty documents | text, source bytes, revision, saved revision/content ID, encoding, endings, location and dirty state unchanged |
+| `N88-07` | UTF-8 Japanese tags, mixed CRLF/LF/CR, Unicode/space output path | exact saved bytes, original endings preserved, saved output reopens as N88 and removes back to original text; editing document unchanged |
+| `N88-08` | UTF-8 BOM and CRLF, .bas destination | exactly one BOM; exact numbered CRLF bytes and reopen/removal round trip |
+| `N88-09` | Japanese CP932 and CRLF | exact legacy bytes with ASCII prefixes; reopen/removal restores decoded original source |
+| `N88-10` | emoji to CP932 over existing destination; missing output directory | UnsupportedEncoding/IoError; existing destination preserved; failed output document unchanged; no new partial files/directories |
+| `N88-11` | packaged sampl1.muc → numbered text → remove → compile | source text and compiled MUB bytes equal original; embedded PCM remains; original document unchanged |
+| `N88-12` | disk source A c, dirty buffer A d, separate N88 export | output contains A d; original disk file remains A c; editing snapshot remains dirty and otherwise unchanged |
+| `N88-13` | edited source or another document after preview | Conflict, no output file, current source unchanged |
+| `N88-14` | source path, lexical alias, symlink and hardlink | InvalidArgument, original bytes and source snapshot unchanged |
+| `N88-15` | empty path, unknown encoding, already-numbered source | explicit errors; no output for invalid encoding; no double numbering |
+
+
+Tests create a uniquely named temporary directory and remove only that directory
+through RAII. They check the process current directory remains unchanged.
+The new test passes in Release, Debug, ASan/UBSan and TSan. Full Release suite:
+37 registered, 33 Pass, 4 Skip, 0 Fail. The 15-case contract now covers the production service. Native save panel Cancel, custom numbering, output bytes, selection
+preservation and original Undo history were exercised; the full GUI matrix remains
+open as recorded in tests/manual/macos-gui-acceptance.md.
 
 ## Voice append coverage
 
@@ -230,7 +286,7 @@ compile, embedded PCM MUB export, WAV export, and structural validation.
 
 ## Completion gate
 
-All eight Phase 6 tests must be active and pass with the existing suite in
+All nine Phase 6 tests must be active and pass with the existing suite in
 Release, Debug, ASan/UBSan, and TSan. The nine `GUI-TOOL`/`GUI-EXPORT` items in
 `tests/manual/macos-gui-acceptance.md` must have real GUI evidence, including
 Undo/Redo, save panel cancellation, progress cancellation, and errors. No

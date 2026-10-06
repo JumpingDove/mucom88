@@ -2080,3 +2080,38 @@ Release全36 CTestは31 Pass／4 Skip／1 Fail。専用testはDebug、ASan／UBS
 `TextTransformService`の大文字小文字を無視した既存tag判定と、`DocumentService`が改行種別を
 行indexだけで保持する方式にある。testは期待仕様として失敗のまま残し、次の実装でproduction側を
 修正する。metadata tagのGUI入口はまだ追加していない。
+
+
+## 31. Phase 6 metadata GUIと改行保持修正（2026-10-06）
+
+Tools → Add Metadata Tags…を実装した。既存canonical tagを保護し、7項目の入力から空欄を省略する。
+番号付きsourceにはN88行番号除去を案内し、共通preview／Apply／Cancel／Undo／Redoを使用する。
+既存tag認識はruntime同様に大小文字を区別し行頭だけを対象とする。previewにowned optional
+line_endingsを持たせ、DocumentServiceで個数・値を検証して本文と同時に更新する。
+Undo／Redoも改行情報を復元し、改行だけの変更もcontent IDとrevisionに反映する。
+TAG-13／14を追加し、不正情報の原子的拒否とinverse／redoの保存bytes・dirty状態を検証する。
+
+4構成でGUI buildと全36 CTestが成功し32 Pass／4 Skip／0 Fail。metadata全14 caseがPassした。
+実GUIでは入力欄、既存title保護、空欄省略、preview Cancel、Apply、Undo／Redo、選択復元を確認した。
+混在改行文書はUndo後Saveで元bytesと一致し、Redo後Saveでは追加行のCRLFと元行のLF／CRを保持した。
+全GUI受入の証拠にはまだ不足があり、CP932実GUI保存、2文書GUI競合、GUI再compile等は未確認である。
+
+
+## 32. N88-BASIC出力GUIの実装前test（2026-10-06）
+
+次の対象をGUI-TOOL-07とし、phase6_n88_export_contract_testを追加した。番号付与は既存serviceを使い、
+元editorへApplyせず別の出力DocumentServiceを保存する提案pipelineをテストする。
+N88-01～12は番号／整数境界、空行／末尾改行、read-only preview、文字コード／混在改行、
+保存失敗時の既存file保護、dirty editorと元disk fileの保持、実曲のcompile round tripを検証する。
+4構成で専用testがPassし、Release全37 CTestは33 Pass／4 Skip／0 Failだった。
+N88-GUI-01～09の手動受入は設計済み・未実施。production GUI／serviceは今回変更していない。
+
+
+## 33. N88-BASIC出力GUI実装（2026-10-06）
+
+N88ExportServiceとTools → Export N88-BASIC Source…を実装した。開始行／増分／encodingを入力し、
+番号付きtextをpreviewしてNSSavePanelへ保存する。元editorへApplyせず、独立DocumentServiceで保存する。
+元sourceのID／revision確認、sourceと同じpath／symlink／hardlinkの拒否、二重番号付与防止を提供する。
+N88-13～15を追加しproduction serviceで実file保存を検証した。4構成でGUI buildと全37 CTestが成功し、
+33 Pass／4 Skip／0 Fail。実GUIでcustom numbering、save panel Cancel、保存bytes、元選択／Undo保持、
+増分0の拒否を確認した。文字コード選択を含む残りのGUI受入は未完了である。

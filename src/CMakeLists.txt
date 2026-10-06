@@ -62,6 +62,7 @@ add_library(mucom88_runtime STATIC
     editor/application_services.cpp
     editor/document_service.cpp
     editor/text_transform_service.cpp
+    editor/n88_export_service.cpp
     editor/song_metadata.cpp
     editor/library_service.cpp
     editor/editor_command.cpp
