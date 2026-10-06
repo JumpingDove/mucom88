@@ -39,6 +39,14 @@ int main()
     // The artifact must remain playable independently of the compiler runtime.
     CMucom player;
     CHECK(test, player.Init(nullptr, MUCOM_OPTION_STEP, MUCOM_AUDIO_RATE));
+    // Non-kana UTF-8 used in resource paths must return without running past
+    // the half-width kana table; boundary kana still maps identically.
+    unsigned char japanese[] = {0xe4,0xbf,0x9d,0};
+    unsigned char firstKana[] = {0xef,0xbd,0xa1,0};
+    unsigned char lastKana[] = {0xef,0xbe,0x9f,0};
+    CHECK(test, player.ConvertUTF8Kana(japanese) == 0);
+    CHECK(test, player.ConvertUTF8Kana(firstKana) == 0xa1);
+    CHECK(test, player.ConvertUTF8Kana(lastKana) == 0xdf);
     player.SetDriverMode(static_cast<int>(compiled.song->driver));
     player.Reset(MUCOM_RESET_PLAYER);
     CHECK(test, player.LoadMusicData(compiled.song->mub_bytes.data(),

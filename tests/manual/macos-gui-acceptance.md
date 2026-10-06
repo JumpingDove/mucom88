@@ -358,3 +358,32 @@ test "$(rg -c '^\| `GUI-.*\| excluded \|' tests/manual/macos-gui-acceptance.md)"
 - 除外2項目は`N/A`とし、release noteへ理由を記載する
 - 拡張2項目は標準版では未提供でもよいが、UIが利用不可理由と代替を表示する
 - 拡張機能を対応済みとして配布する場合だけ、対象providerと実環境で`PASS`を必要とする
+
+## PCM bank GUI詳細受入設計（2026-10-06・一部実施済み）
+
+GUI-TOOL-05／06は共通serviceを使い、入力選択 → 内容確認 → 保存panelの流れとする。
+ToolsのDATA／list入口と非同期build、entry preview、save panelを実装した。
+
+| ID | 操作・fixture | 期待結果・証拠 |
+|---|---|---|
+| PCM-GUI-01 | Unicode／空白pathのDATA directoryを選択 | occupied slot番号・name・長さ・合計容量を確認でき、sparse番号を保持 |
+| PCM-GUI-02 | listからraw＋16-bit mono／stereo WAVを選択 | list親基準で解決し、32-byte WAV変換とraw paddingの結果を表示 |
+| PCM-GUI-03 | 入力panel／内容確認／保存panelでそれぞれCancel | 既存出力・入力・editor本文／選択／dirty／Undoを変更せず中間fileなし |
+| PCM-GUI-04 | Unicode destinationへ保存、既存output置換、再読込／compile | 生成bankを#pcmでcompileでき、MUBにPCMが埋め込まれる |
+| PCM-GUI-05 | missing DATA／occupied VOICE／list行2のmissing sample | 問題path、理由、list行を表示し、不完全bankを保存しない |
+| PCM-GUI-06 | 32／33 entries、容量直下／ちょうど上限 | 境界成功・失敗が自動契約と一致し、silent truncationなし |
+| PCM-GUI-07 | 8-bit／float／3ch／破損WAV | unsupportedとcorruptを区別し、既存destinationを保持 |
+| PCM-GUI-08 | directory／missing parent／入力pathとaliasを保存先に指定 | 保存拒否、既存fileと入力を保持、error後の再試行成功 |
+| PCM-GUI-09 | dirty editorと複数windowを開いた状態でbank生成 | editorや再生ownerへ干渉せず、明示したdestinationへだけ出力 |
+
+build中はutility queueで処理し、Cancelは結果を破棄する（workerへの中断は行わずbounded変換を終了させる）。
+2026-10-06実GUI証拠（検証専用appとtemporary fixture）:
+
+- PCM-GUI-01（一部）: DATA slot 1／3を保持し、8／8 bytes・1040 bytes totalをpreview。
+- PCM-GUI-02（一部）: Unicode directoryのraw 8 bytes＋mono WAVをpreview。2 slots、音声40 bytes、1064 bytes total。
+- PCM-GUI-03（一部）: DATA preview Cancelとlist save panel Cancel後に入力inventory不変・中間fileなし、空editor不変を確認。
+- PCM-GUI-04（一部）: `生成 bank.bin`へ保存し、header start/length 0/2と2/8、body=`ABCDEFGH`＋32 bytes of 0x08を確認。GUIで絶対#pcm pathを指定しcompile成功。
+- PCM-GUI-05（一部）: missing.wavで`PCM list line 2`、理由とUnicode absolute pathを表示。
+
+残りのdirty selection／Undo、2 window、容量境界、全error matrix、build中Cancel、保存retryは未実施。
+GUI-TOOL-05／06全体を受入完了とはしない。

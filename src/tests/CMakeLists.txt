@@ -150,6 +150,8 @@ mucom88_add_phase6_contract_test(phase6_voice_usage_contract_test
     test_phase6_voice_usage_contract.cpp 45)
 mucom88_add_phase6_contract_test(phase6_voice_append_contract_test
     test_phase6_voice_append_contract.cpp 45)
+mucom88_add_phase6_contract_test(phase6_pcm_wave_contract_test
+    test_phase6_pcm_wave_contract.cpp 30)
 mucom88_add_phase6_contract_test(phase6_pcm_bank_contract_test
     test_phase6_pcm_bank_contract.cpp 60)
 mucom88_add_phase6_contract_test(phase6_format_validator_contract_test
@@ -216,4 +218,13 @@ add_test(NAME native_regression_test
         -P ${CMAKE_CURRENT_SOURCE_DIR}/native_regression_test.cmake)
 mucom88_set_test_properties(native_regression_test 90)
 set_tests_properties(native_regression_test PROPERTIES
+    ENVIRONMENT "SDL_AUDIODRIVER=mucom88-invalid-audio-driver")
+
+add_test(NAME pcmtool_cli_contract_test
+    COMMAND ${CMAKE_COMMAND}
+        -DPCMTOOL_EXE=$<TARGET_FILE:pcmtool>
+        -DWORK_DIR=${MUCOM88_TEST_WORK_ROOT}/pcmtool_cli_contract_test
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/pcmtool_cli_contract_test.cmake)
+mucom88_set_test_properties(pcmtool_cli_contract_test 30)
+set_tests_properties(pcmtool_cli_contract_test PROPERTIES
     ENVIRONMENT "SDL_AUDIODRIVER=mucom88-invalid-audio-driver")

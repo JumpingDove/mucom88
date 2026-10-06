@@ -1403,12 +1403,20 @@ VAP-GUI-01～09も設計済み・未実施。4構成でbuildし、新usage test�
 future本体は予定APIの宣言だけの一時headerで構文確認したが、runtime assertionは未実行である。
 Release全38 CTestは33 Pass／4 Skip／1 Fail。production codeは変更していない。
 
+**次の実装対象とtest（2026-10-06）:** PCM bank作成（GUI-TOOL-05／06）の共通portable serviceを選択した。
+PCM-01～21でraw padding／header、list grammar、32 entry／容量境界、sparse DATA、WAVの形式と破損、
+入力保護／原子的保存失敗、native compileのPCM埋込bytesを設計・実装した。新しいactiveな
+phase6_pcm_wave_contract_testは既存変換器のmono／stereo／JUNKと独立無音oracle、errorを検証する。
+PCM service headerは未追加でbank契約はSkip。宣言だけの一時headerでfuture本体の構文を確認する。
+GUI受入matrixを追加し、production実装とGUI受入は次の作業とする。
+Release／Debug／ASan+UBSan／TSanでGUI buildと全39 CTestが成功し、36 Pass／3 Skip／0 Fail。
+
 - [ ] text transformをUIから分離し、previewとUndoを提供する
 - [ ] N88行番号除去、G channel変換、metadata tag追加
 - [x] 使用FM voice定義の追記（service／GUI実装・自動回帰完了、残GUI受入は継続）
 - [ ] N88-BASIC source出力
-- [ ] `pcmtool`をportable libraryとCMake targetへ整理する
-- [ ] DATA／`VOICE._n`、list、WAV／ADPCMからPCM bankを作成する
+- [x] `pcmtool`をportable libraryとCMake targetへ整理する（PcmBankService／portable CLI）
+- [x] DATA／`VOICE._n`、list、WAV／ADPCMからPCM bankを作成する（service／GUI実装・自動回帰完了、残GUI受入は継続）
 - [ ] MUB、WAV、VGM、S98 save panelと非同期export
 - [ ] export中のprogress、cancel、失敗時の一時file削除
 - [ ] 生成物をmacOS版で再読込できることを確認する
@@ -1536,3 +1544,7 @@ Windows CLI比較は先行条件にしない。
 | 2026-10-06 | 次実装項目のtest追加 | `GUI-TOOL-03`を選択し、metadata tagの8ケースと手動GUI受入を設計・登録 | 専用CTestはbuild成功、`TAG-03`大文字tagと`TAG-06`混在改行の2条件でFail。次のproduction実装で修正する。GUI入口は未実装 |
 
 | 2026-10-06 | Phase 6 使用FM voice追記実装 | owned使用番号、resolved bank path、VoiceAppendService、非同期compileからのpreview／Applyを追加。既存定義・encoding・改行・Undoを保持しAMは明示拒否 | 4構成で38 CTest中35 Pass／3 Skip／0 Fail。実GUIで6音色preview、Cancel、Apply、Undo／Redo、再compile、no-op再適用を確認。残GUI matrixは継続 |
+
+| 2026-10-06 | 次実装PCM bankのtest詳細化 | PCM-01～21のservice契約、既存WAV変換器のactive試験、GUI受入matrixを追加 | production serviceは未実装、bank契約はSkip。future本体は宣言だけで構文確認。4構成の結果はPhase 6 README参照 |
+
+| 2026-10-06 | Phase 6 PCM bank実装 | PcmBankService、portable pcmtool CMake target、DATA／listの非同期buildとpreview／保存GUIを追加。入力alias保護、bounded WAV検証、原子的保存を実装。非カナUTF-8によるcore table越境を修正 | 4構成で40 CTest中38 Pass／2 Skip／0 Fail。PCM-01～22・CLI・kana回帰がPass。実GUIでmixed preview、sparse DATA、Cancel、Unicode保存bytes、missing行／path、生成bankのcompileを確認。残GUI matrixは継続 |

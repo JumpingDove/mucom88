@@ -64,6 +64,7 @@ add_library(mucom88_runtime STATIC
     editor/voice_append_service.cpp
     editor/text_transform_service.cpp
     editor/n88_export_service.cpp
+    editor/pcm_bank_service.cpp
     editor/song_metadata.cpp
     editor/library_service.cpp
     editor/editor_command.cpp
@@ -106,6 +107,9 @@ endif()
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(mucom88_runtime PRIVATE -Wall -Wextra -Wpedantic)
 endif()
+
+add_executable(pcmtool utils/pcm_bank_main.cpp)
+target_link_libraries(pcmtool PRIVATE mucom88_runtime ${MUCOM88_SDL_TARGET})
 
 add_executable(mucom88 main.cpp)
 target_compile_definitions(mucom88 PRIVATE USE_SDL=1)

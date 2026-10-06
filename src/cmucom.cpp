@@ -1712,17 +1712,11 @@ unsigned char CMucom::ConvertUTF8Kana(unsigned char *ptr)
 	//		UTF8の文字列ポインタが半角カナだった場合、SJISコードを返す
 	//		(半角カナでなかった場合は0を返す)
 	//
-	unsigned char res;
-	unsigned int utf8code;
-	const unsigned int *kanacode;
-
-	utf8code = (ptr[0]<<16)| (ptr[1]<<8)| (ptr[2]);
-	kanacode = cnv_utf8kana;
-	res = 0xa1;
-	while (1) {
-		if ( *kanacode == utf8code ) return res;
-		res++;
-		kanacode++;
+	const unsigned int utf8code = (ptr[0]<<16)| (ptr[1]<<8)| (ptr[2]);
+	// Non-kana UTF-8 (for example Japanese resource paths) must not scan
+	// beyond the conversion table.
+	for (size_t index = 0; index + 1 < sizeof(cnv_utf8kana) / sizeof(cnv_utf8kana[0]); ++index) {
+		if (cnv_utf8kana[index] == utf8code) return static_cast<unsigned char>(0xa1 + index);
 	}
 	return 0;
 }

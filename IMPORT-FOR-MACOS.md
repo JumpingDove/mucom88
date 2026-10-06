@@ -2135,3 +2135,26 @@ CompiledSongにowned使用番号と解決済みbank pathを追加し、VoiceAppe
 4構成の全38 CTestは35 Pass／3 Skip／0 Fail。使用情報のownership、独立numeric oracle、実曲と3 driverの再compileを確認した。
 実GUIで6音色preview、Cancel、Apply、Undo／Redo、再compile、no-op再適用を確認し、sheetのpreview寿命と空Undo groupを修正した。
 複数window、encoding保存、default bankとの切替など残りのGUI matrixは未完了。Phase 6全体も未完了である。
+
+## 36. PCM bank作成の詳細test設計（2026-10-06）
+
+次はGUI-TOOL-05／06が共有するportable PCM bank serviceとする。PCM-01～21で4-byte padding、
+32 entry、容量境界、sparse DATA、UTF-8 listと相対path、WAV mono／stereo・破損・unsupported形式、
+保存失敗／入力alias保護、native compileの埋込PCM bytesを固定した。
+既存Adpcm用のactive CTestと独立無音oracleを追加した。production codeは変更していない。
+PCM bank契約本体は宣言だけの一時headerで構文確認し、header未実装によりruntimeはSkipを維持する。
+GUI matrixは未実施。serviceとGUIの実装は次作業であり、PCM機能やPhase 6の完了とはしない。
+4構成のGUI buildと全39 CTestは36 Pass／3 Skip／0 Fail。SkipはPCM bank／format validator／integrationである。
+
+## 37. PCM bank作成実装（2026-10-06）
+
+PcmBankServiceとportable pcmtool CMake targetを追加した。DATAのsparse slot、UTF-8 list／相対path、
+rawの4-byte padding、16-bit mono／stereo WAVの16000 Hz ADPCM変換、32 entryと容量境界を実装した。
+read容量・WAV構造・resampling後の容量を検証し、Saveは入力path／aliasを拒否して一時fileから原子的に置換する。
+ToolsにDATA／list入口、非同期build、entry preview、save panelを追加した。build Cancelは結果の提示を取り消し、
+workerはboundedな読込／変換を終える。conversion中間fileは作らない。
+PCM結合で日本語#pcm pathがcoreのkana変換tableを越境する不具合を検出し、探索境界とregressionを追加した。
+4構成でGUI／CLI buildと全40 CTestが成功（38 Pass／2 Skip／0 Fail）。PCM-22追加後の関連4 CTestも全構成でPass。
+実GUIでmixed raw／WAV、sparse DATA、preview／save Cancel、Unicode保存とexact bytes、missing line 2／path、
+生成bankを#pcm指定したcompile成功を確認した。複数window／dirty selection／容量・error全matrixは未完了。
+format validatorとPhase 6結合はSkipを継続し、Phase 6全体の完了とはしない。

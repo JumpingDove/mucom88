@@ -18,6 +18,7 @@
 #include "editor/text_transform_service.h"
 #include "editor/n88_export_service.h"
 #include "editor/voice_append_service.h"
+#include "editor/pcm_bank_service.h"
 #include "editor/song_metadata.h"
 #include "editor/editor_command.h"
 #include "editor/recovery_service.h"
@@ -404,6 +405,7 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     BOOL _fastForwarding;
     NSString *_restoredRecoveryPath;
     BOOL _updatingEditor;
+    BOOL _buildingPcm;
 }
 - (IBAction)compileDocument:(id)sender;
 - (IBAction)compileAndPlayDocument:(id)sender;
@@ -430,6 +432,10 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
 - (IBAction)convertGChannel:(id)sender;
 - (void)runTextTransform:(mucom88::TextTransformKind)kind
     title:(NSString *)title;
+- (IBAction)buildPcmFromData:(id)sender;
+- (IBAction)buildPcmFromList:(id)sender;
+- (void)buildPcmBankFromDirectory:(BOOL)directory;
+- (void)previewPcmBank:(const mucom88::PcmBankArtifact &)artifact;
 - (IBAction)appendUsedVoices:(id)sender;
 - (void)showToolPreview:(const mucom88::TextTransformPreview &)preview
     source:(const mucom88::DocumentSnapshot &)source title:(NSString *)title;
@@ -1040,6 +1046,111 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
     }];
 }
 
+- (IBAction)buildPcmFromData:(id)sender
+{
+    (void)sender;
+    [self buildPcmBankFromDirectory:YES];
+}
+
+- (IBAction)buildPcmFromList:(id)sender
+{
+    (void)sender;
+    [self buildPcmBankFromDirectory:NO];
+}
+
+- (void)buildPcmBankFromDirectory:(BOOL)directory
+{
+    if (_buildingPcm) return;
+    NSURL *url = [self chooseResourceWithTitle:directory ? @"Choose DATA / VOICE Directory" : @"Choose PCM Sample List"
+        directory:directory];
+    if (url == nil) return;
+    const std::string input(url.fileSystemRepresentation);
+    _buildingPcm = YES;
+    auto cancelled = std::make_shared<std::atomic<bool>>(false);
+    NSAlert *busy = [[NSAlert alloc] init];
+    busy.messageText = @"Building PCM Bank";
+    busy.informativeText = @"Reading samples and converting WAV audio…";
+    [busy addButtonWithTitle:@"Cancel"];
+    NSProgressIndicator *progress = [[NSProgressIndicator alloc] initWithFrame:NSMakeRect(0, 0, 360, 18)];
+    progress.indeterminate = YES;
+    [progress startAnimation:nil];
+    busy.accessoryView = progress;
+    [busy beginSheetModalForWindow:_editorView.window completionHandler:^(NSModalResponse response) {
+        if (response == NSAlertFirstButtonReturn) cancelled->store(true);
+    }];
+    __weak MucomDocument *weakSelf = self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        const auto built = directory ? mucom88::PcmBankService().BuildFromDataDirectory(input)
+            : mucom88::PcmBankService().BuildFromList(input);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            MucomDocument *document = weakSelf;
+            [NSApp endSheet:busy.window returnCode:NSModalResponseOK];
+            if (document == nil) return;
+            document->_buildingPcm = NO;
+            if (cancelled->load()) return;
+            if (!built.Succeeded()) {
+                NSAlert *error = [[NSAlert alloc] init];
+                error.messageText = @"Cannot Build PCM Bank";
+                error.informativeText = StringFromUtf8(built.error.message + "\n" + built.error.path);
+                [error beginSheetModalForWindow:document->_editorView.window completionHandler:nil];
+                return;
+            }
+            [document previewPcmBank:built.value];
+        });
+    });
+}
+
+- (void)previewPcmBank:(const mucom88::PcmBankArtifact &)artifact
+{
+    // Own the bytes and provenance throughout both sheets.
+    const auto bank = artifact;
+    const auto word = [&](std::size_t at) { return int(bank.bytes[at]) | (int(bank.bytes[at + 1]) << 8); };
+    NSMutableString *details = [NSMutableString stringWithString:@"Slot  Name              Bytes     Start\n"];
+    NSUInteger count = 0;
+    for (int slot = 0; slot < 32; ++slot) {
+        const int length = word(slot * 32 + 30) * 4;
+        if (!length) continue;
+        ++count;
+        std::string name(bank.bytes.begin() + slot * 32, bank.bytes.begin() + slot * 32 + 16);
+        for (char &c : name) {
+            if (c == 0) c = ' ';
+            else if (static_cast<unsigned char>(c) < 32 || static_cast<unsigned char>(c) >= 127) c = '?';
+        }
+        [details appendFormat:@"%4d  %-16s  %6d  %8d\n", slot + 1, name.c_str(), length, word(slot * 32 + 28) * 4];
+    }
+    NSAlert *preview = [[NSAlert alloc] init];
+    preview.messageText = @"PCM Bank Preview";
+    preview.informativeText = [NSString stringWithFormat:@"%lu entries • %lu bytes of audio • %lu bytes total",
+        (unsigned long)count, (unsigned long)(bank.bytes.size() - 1024), (unsigned long)bank.bytes.size()];
+    [preview addButtonWithTitle:@"Save…"];
+    [preview addButtonWithTitle:@"Cancel"];
+    NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, 0, 480, 240)];
+    scroll.hasVerticalScroller = YES;
+    NSTextView *view = [[NSTextView alloc] initWithFrame:scroll.bounds];
+    view.editable = NO;
+    view.font = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular];
+    view.string = details;
+    scroll.documentView = view;
+    preview.accessoryView = scroll;
+    [preview beginSheetModalForWindow:_editorView.window completionHandler:^(NSModalResponse response) {
+        if (response != NSAlertFirstButtonReturn) return;
+        NSSavePanel *panel = [NSSavePanel savePanel];
+        panel.title = @"Save PCM Bank";
+        panel.nameFieldStringValue = @"pcm-bank.bin";
+        panel.canCreateDirectories = YES;
+        [panel beginSheetModalForWindow:self->_editorView.window completionHandler:^(NSModalResponse choice) {
+            if (choice != NSModalResponseOK) return;
+            const auto saved = mucom88::PcmBankService().Save(bank, panel.URL.fileSystemRepresentation);
+            if (!saved.Succeeded()) {
+                NSAlert *error = [[NSAlert alloc] init];
+                error.messageText = @"Cannot Save PCM Bank";
+                error.informativeText = StringFromUtf8(saved.error.message + "\n" + saved.error.path);
+                [error beginSheetModalForWindow:self->_editorView.window completionHandler:nil];
+            } else self->_statusLabel.stringValue = @"PCM bank saved";
+        }];
+    }];
+}
+
 - (IBAction)appendUsedVoices:(id)sender
 {
     (void)sender;
@@ -1622,6 +1733,8 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
         return mucom88::IsEditorCommandEnabled(
             mucom88::EditorCommand::Compile, state);
     }
+    if (item.action == @selector(buildPcmFromData:) || item.action == @selector(buildPcmFromList:))
+        return !_buildingPcm && _editorView != nil && _editorView.window.attachedSheet == nil;
     if (item.action == @selector(appendUsedVoices:))
         return state.compiler_ready && _editorView != nil && _editorView.window.attachedSheet == nil;
     if (item.action == @selector(removeN88LineNumbers:) ||
@@ -1803,6 +1916,8 @@ static BOOL OpenDroppedFiles(id<NSDraggingInfo> sender)
 
     AddMenuItem(toolsMenu, @"Add Metadata Tags…", @selector(addMetadataTags:), @"");
     AddMenuItem(toolsMenu, @"Append Used FM Voices…", @selector(appendUsedVoices:), @"");
+    AddMenuItem(toolsMenu, @"Build PCM Bank from DATA…", @selector(buildPcmFromData:), @"");
+    AddMenuItem(toolsMenu, @"Build PCM Bank from List…", @selector(buildPcmFromList:), @"");
     AddMenuItem(toolsMenu, @"Export N88-BASIC Source…", @selector(exportN88Source:), @"");
 
     NSMenuItem *formatItem = [[NSMenuItem alloc] init];

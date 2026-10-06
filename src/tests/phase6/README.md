@@ -16,7 +16,8 @@ while any of its contract tests is skipped or failing.
 | `phase6_n88_export_contract_test` | N88 export, text transform, document, and compiler services | Pass |
 | `phase6_voice_usage_contract_test` | existing compiler service; owned usage field | Pass |
 | `phase6_voice_append_contract_test` | voice append and text transform headers | Pass |
-| `phase6_pcm_bank_contract_test` | `editor/pcm_bank_service.h` | Skip |
+| `phase6_pcm_wave_contract_test` | existing `Adpcm` and independent test oracle | Pass |
+| `phase6_pcm_bank_contract_test` | `editor/pcm_bank_service.h` | Pass |
 | `phase6_format_validator_contract_test` | `editor/export_format_validator.h` | Skip |
 | `phase6_export_operation_test` | existing `editor/export_service.h` | Pass |
 | `phase6_integration_contract_test` | text transform, PCM bank, and validator headers | Skip |
@@ -31,10 +32,10 @@ path have been exercised in the real GUI, including restoration of a selected
 non-G line. The remaining acceptance matrix (saved documents, dirty state,
 multiple windows, and conflict) is pending.
 
-Release, Debug, ASan/UBSan, and TSan each have 38 registered tests:
-35 Pass, 3 Skip, 0 Fail. Voice usage and voice append contracts now execute
-against production code. PCM bank, format validator, and integration remain
-unimplemented and skipped.
+Release, Debug, ASan/UBSan, and TSan each have 40 registered tests:
+38 Pass, 2 Skip, 0 Fail. Voice usage, voice append, PCM bank, and the portable
+pcmtool CLI execute against production code. Format validator and Phase 6
+integration remain skipped because the validator is unimplemented.
 
 ## Public API contract used by the tests
 
@@ -56,10 +57,9 @@ The tests define the minimum platform-neutral surface for the new services:
 - `ArtifactValidator::Validate(bytes, ExportFormat, expectedFrames)` parses
   WAV, VGM, and S98 independently of their writers.
 
-The text transform API exists. Voice append, PCM bank, and artifact validator
-remain contract choices for later implementation. If one of those APIs is
-deliberately redesigned, update its test and this contract together while
-preserving the observable behaviors below.
+Text transform, voice append, and PCM bank APIs are implemented. The artifact
+validator remains a contract for later implementation. If its API is deliberately
+redesigned, update its test and this contract together while preserving behavior.
 
 ## Text transform coverage
 
@@ -284,19 +284,108 @@ recompile, and repeat Apply without an extra Undo entry. GUI testing found
 and fixed a dangling preview reference in the asynchronous sheet and an empty
 Undo group on unchanged Apply. The remaining manual matrix is pending.
 
-## PCM bank coverage
+## PCM bank implementation and coverage (2026-10-06)
 
-The test synthesizes DATA, VOICE._1, ADPCM, WAV, and list files. It checks the
-1024-byte header, 32-byte entries, little-endian address/length fields, body
-bytes, path resolution relative to the list, a Unicode path, and unchanged
-process current directory. It checks one and 32 entries, rejects 33, rejects
-an oversized body, identifies a missing entry file, missing DATA, a missing
-list input, and a truncated WAV. The integration test passes a generated bank
-through compile and verifies it is embedded in the resulting MUB.
+Portable PCM bank service is shared by GUI-TOOL-05 (DATA) and GUI-TOOL-06
+(list). `editor/pcm_bank_service.h` provides const methods
+`PcmBankService::BuildFromDataDirectory(path)` and `BuildFromList(path)`,
+returning `ServiceResult<PcmBankArtifact>`. Artifact bytes and absolute input
+paths are owned. `Save(artifact, path)` returns `ServiceResult<string>` and
+validates header ranges before atomic temporary-file replacement.
+Input paths, including symlinks/hardlinks, cannot be output destinations.
+Builders never write intermediate files or change the process cwd.
 
-Additional format cases to add as the WAV/ADPCM decoder contract is finalized:
-8/16-bit mono/stereo support, unknown RIFF chunks, odd-byte padding, and
-ADPCM length/hash. The service must reject unsupported formats explicitly.
+The portable CMake `pcmtool` target uses this service:
+
+```sh
+build/pcmtool --list samples.txt --output bank.bin
+build/pcmtool --data directory-containing-DATA --output bank.bin
+```
+
+CLI usage errors return 2; build/save failures return 1 with message/path.
+`pcmtool_cli_contract_test` verifies Unicode/space input paths, exact bank
+body, failure preservation, source overwrite rejection, and argument errors
+with an invalid SDL driver to ensure conversion needs no audio device.
+
+The output is a 1024-byte header (32 slots of 32 bytes), followed by an ADPCM
+body. Fields at +28/+30 are little-endian start/length in four-byte units.
+Raw samples are zero-padded to four bytes, and length includes that padding.
+The aligned body must be strictly below 0x40000 bytes: 0x3fffc is accepted;
+0x40000 cannot be represented as one 16-bit length and is rejected. The same
+limit applies cumulatively, including padding. Empty input is an error.
+
+Lists are UTF-8 (optional BOM), one unquoted path per nonblank line, with LF,
+CRLF, or CR and an optional terminal newline. Blank whitespace-only lines
+are ignored. Spaces inside paths are preserved. Relative paths use the list
+parent; absolute paths remain absolute. Order and repeated paths are retained.
+`.adpcm`/`.bin` are raw input; `.wav` is converted (case insensitive).
+Unknown extensions return UnsupportedFormat. ASCII list basenames are clipped
+to 16 bytes and space-padded in the header. Unicode directory paths are covered;
+non-ASCII list display-name bytes use `?`; DATA name bytes are preserved.
+Unicode input and output filesystem paths are supported.
+
+DATA is exactly 1024 bytes. Nonzero source address ranges define occupied
+slots; retain sparse slot numbers and names/options while rebuilding body
+start/length. Empty slots require no VOICE file. Occupied slots require
+VOICE._(slot+1), with bytes matching the declared range. Missing occupied
+files fail the whole build instead of silently producing an incomplete bank.
+
+WAV contract: RIFF/WAVE, PCM format 1, 16-bit mono/stereo, nonzero sample rate,
+consistent blockAlign/byteRate, whole nonempty frames, valid bounded chunks.
+Unknown chunks and odd-size padding are supported. Conversion uses 16000 Hz
+and 32-byte ADPCM padding, matching the existing converter. 8-bit, IEEE float,
+and >2 channels return UnsupportedFormat. Structural corruption returns
+InvalidData. Builds create no intermediate `_adpcm.bin` or destination file. Input reads
+are bounded: list 1 MiB, WAV 16 MiB, raw samples by bank capacity. Resampled
+output size is checked before allocating the converter buffer.
+
+| ID | Fixture/action | Expected result |
+|---|---|---|
+| PCM-01 | 5-byte raw + 4-byte raw list | exact body including three zero pad bytes; start/length 0/2 and 2/1 |
+| PCM-02 | raw lengths 1,2,3,4,7,8,9 | ceil(length/4) units; aligned body, no truncation |
+| PCM-03 | two entries and unused slots | basename/space-padded header and 16-byte name truncation; remaining 30 slots zero; independent range oracle passes |
+| PCM-04 | build, retain result, build different list | earlier bytes owned and unchanged; inputs and file inventory unchanged |
+| PCM-05 | BOM, blank lines, LF/CRLF/CR, terminal LF absent, spaces/absolute path | same one-slot result; Unicode list directory resolves correctly |
+| PCM-06 | duplicate path lines | two ordered slots, no deduplication |
+| PCM-07 | empty/blank/NUL/invalid UTF-8 list, missing list/sample | InvalidData or NotFound; owned result empty; missing sample path and `line 2` diagnostic |
+| PCM-08 | zero-length raw, unknown extension | InvalidData / UnsupportedFormat with failing input path |
+| PCM-09 | 32 / 33 entries | all 32 slots correctly addressed / atomic InvalidData, no silent truncation |
+| PCM-10 | 0x3fffc / 0x40000 / 0x40004 bytes; aggregate at limit | exact largest accepted bank / InvalidData; padding included in limit |
+| PCM-11 | DATA with occupied slots 1 and 3 | sparse mapping retained; VOICE._3 remains slot 3; names/options/input unchanged |
+| PCM-12 | DATA with all 32 slots | valid complete bank; slot 32 start/length 31/1 |
+| PCM-13 | occupied VOICE missing or length mismatch | NotFound / InvalidData, path, empty result |
+| PCM-14 | missing DATA; lengths 0/1023/1025; reversed addresses; no occupied entries | NotFound / InvalidData; no process cwd changes |
+| PCM-15 | 64 silent frames at 16000 Hz, 16-bit mono/stereo | exact 32 ADPCM bytes of 0x08, length field 8 |
+| PCM-16 | odd-size JUNK with pad; uppercase .WAV | same exact decoded bank; no temporary files |
+| PCM-17 | truncation/magic/oversized RIFF or chunk/float/8-bit/3ch/zero rate/bad align or byteRate/partial frame/no data | classified errors and failing path; empty result and unchanged inventory |
+| PCM-18 | Save to Unicode path replacing existing output | exact artifact bytes, owned artifact unchanged |
+| PCM-19 | Save truncated artifact or out-of-range header | InvalidData; prior destination and directory inventory retained |
+| PCM-20 | Save onto input/list, input symlink/hardlink, directory, absent parent | refuse source overwrite; retain inputs/sentinel; no partial output or implicit directories |
+| PCM-21 | Save → native compiler with PCM channel | successful compile; embedded MUB PCM bytes exactly equal generated bank without requiring format-validator header |
+| PCM-22 | empty/NUL input paths; 1 Hz expansion; 8000/44100 Hz silence | InvalidArgument; capacity rejection before decode allocation; independent resampling size/bytes checks |
+
+`phase6_pcm_wave_contract_test` runs now against existing Adpcm. It checks
+four mono/stereo/JUNK combinations against the independent silence oracle,
+seven malformed/unsupported inputs, and corruption rejection by the test bank
+oracle. It does not establish that the future builder is implemented.
+`phase6_pcm_bank_contract_test` is now active and all PCM-01–22 cases pass.
+The native compile round trip exposed a pre-existing unbounded half-width
+kana table lookup for other Japanese UTF-8. The lookup now stops at the table
+boundary. Compile service regressions cover non-kana and first/last kana.
+
+Validation: all four GUI/CLI builds and full 40-test suites pass with 38 Pass,
+2 Skip, 0 Fail. After PCM-22 and input-path guards were added, the affected
+PCM/WAV/compile/CLI targets also pass in all four configurations.
+Native GUI evidence covers mixed raw/WAV preview, DATA sparse slots 1/3,
+preview/save-panel Cancel, Unicode output with exact byte inspection, missing
+sample line/path, and successful GUI compile with the generated bank.
+The remaining manual matrix is pending.
+
+All test inputs and outputs use RAII temporary directories; filesystem reads
+use explicit paths, and production process cwd must never change. Save failure
+checks are deterministic (directory/missing parent) rather than unreliable
+permission bits under privileged test users. Real disk-full/mid-write fault
+injection and non-ASCII header names remain follow-up cases.
 
 ## Export and parser coverage
 
@@ -315,7 +404,7 @@ compile, embedded PCM MUB export, WAV export, and structural validation.
 
 ## Completion gate
 
-All ten Phase 6 tests must be active and pass with the existing suite in
+All eleven Phase 6 tests must be active and pass with the existing suite in
 Release, Debug, ASan/UBSan, and TSan. The nine `GUI-TOOL`/`GUI-EXPORT` items in
 `tests/manual/macos-gui-acceptance.md` must have real GUI evidence, including
 Undo/Redo, save panel cancellation, progress cancellation, and errors. No
